@@ -134,7 +134,6 @@ install-pcl5-framework:
 
 install-msbuild-specific-files:
 	$(MKINSTALLDIRS) $(DESTDIR)$(mono_libdir)/mono/xbuild
-	(cd $(DESTDIR)$(mono_libdir)/mono/xbuild; ln -sfh Current 15.0)
 	$(INSTALL_DATA) $(DENIED_ASSEMBLY_LIST_SRC) $(DESTDIR)$(mono_libdir)/mono/xbuild
 
 EXTRA_DISTFILES = \

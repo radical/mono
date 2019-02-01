@@ -16,4 +16,7 @@ class MSBuild (GitHubPackage):
 		# use the bootstrap msbuild as the system might not have one available!
 		self.sh ('./artifacts/mono-msbuild/msbuild mono/build/install.proj /p:MonoInstallPrefix=%s /p:Configuration=Release-MONO /p:IgnoreDiffFailure=true' % self.staged_prefix)
 
+	def deploy (self):
+		os.symlink('Current', '%s/lib/mono/xbuild/15.0' % self.staged_profile)
+
 MSBuild ()
