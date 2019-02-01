@@ -18,5 +18,6 @@ class MSBuild (GitHubPackage):
 
 	def deploy (self):
 		os.symlink('Current', '%s/lib/mono/xbuild/15.0' % self.staged_profile)
+		os.symlink('Current', '%s/lib/mono/msbuild/15.0' % self.staged_profile)
 
 MSBuild ()
