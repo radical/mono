@@ -234,15 +234,79 @@ namespace DebuggerTests
 			}
 			Assert.True(false, $"Could not find variable '{name}'");
 		}
-		void CheckObject (JToken locals, string name, string class_name, string subtype=null) {
+
+		JToken CheckObject (JToken locals, string name, string class_name, string subtype=null, bool is_null=false) {
 			foreach (var l in locals) {
 				if (name != l["name"]?.Value<string> ())
 					continue;
 
 				var val = l["value"];
 				Assert.Equal ("object", val ["type"]?.Value<string> ());
+				Assert.True (val ["isValueType"] == null || !val ["isValueType"].Value<bool> ());
 				Assert.Equal (class_name, val ["className"]?.Value<string> ());
-				Assert.Equal (subtype, val ["subtype"]?.Value<string> ());
+
+				var has_null_subtype = val ["subtype"] != null && val ["subtype"]?.Value<string> () == "null";
+				Assert.Equal (is_null, has_null_subtype);
+				if (subtype != null)
+					Assert.Equal (subtype, val ["subtype"]?.Value<string> ());
+
+				return l;
+			}
+			Assert.True(false, $"Could not find variable '{name}'");
+			return null;
+		}
+
+		async Task CheckDateTime (JToken locals, string name, DateTime expected, DebugTestContext ctx)
+			=> await CheckObjectOnLocals (locals, name, ctx,
+				test_fn: (members) => {
+					//members.HasNumber ("_dateData", 6.3713531106E+17);
+					//members.HasNumber ("InternalTicks", 6.3713531106E+17);
+
+					// not checking everything
+					members.HasNumber ("Year", expected.Year);
+					members.HasNumber ("Month", expected.Month);
+					members.HasNumber ("Day", expected.Day);
+					members.HasNumber ("Hour", expected.Hour);
+					members.HasNumber ("Minute", expected.Minute);
+					members.HasNumber ("Second", expected.Second);
+
+					// FIXME: check some float properties too
+
+					CheckEnum (members, "DayOfWeek", "System.DayOfWeek", expected.DayOfWeek.ToString ());
+
+					//members.HasNumber ("Kind", 6);
+					//FIXME: `Date` property
+				}
+			);
+
+		JToken CheckBool (JToken locals, string name, bool expected)
+		{
+			foreach (var l in locals) {
+				if (name != l["name"]?.Value<string> ())
+					continue;
+
+				var val = l["value"];
+				Assert.Equal ("boolean", val ["type"]?.Value<string> ());
+				if (val ["value"] == null)
+					Assert.True (false, "expected bool value not found for variable named {name}");
+				Assert.Equal (expected, val ["value"]?.Value<bool> ());
+
+				return l;
+			}
+			Assert.True(false, $"Could not find variable '{name}'");
+			return null;
+		}
+
+		void CheckValueType (JToken locals, string name, string class_name) {
+			foreach (var l in locals) {
+				if (name != l["name"]?.Value<string> ())
+					continue;
+
+				var val = l["value"];
+				Assert.Equal ("object", val ["type"]?.Value<string> ());
+				Console.WriteLine ($"-- isValueType: '{val ["isValueType"]?.Value<bool> ()}'");
+				Assert.True (val ["isValueType"] != null && val ["isValueType"].Value<bool> ());
+				Assert.Equal (class_name, val ["className"]?.Value<string> ());
 				return;
 			}
 			Assert.True(false, $"Could not find variable '{name}'");
@@ -279,6 +343,19 @@ namespace DebuggerTests
 			Assert.True(false, $"Could not find variable '{name}'");
 		}
 
+		void CheckEnum (JToken locals, string name, string class_name, string descr)
+		{
+			var local = locals?.Where (l => l ["name"].Value<string> () == name).FirstOrDefault ();
+			if (local == null)
+				Assert.True(false, $"Could not find variable '{name}'");
+
+			var val = local ["value"];
+			Assert.Equal ("object", val ["type"]?.Value<string> ());
+			Assert.True (val ["isEnum"] != null && val ["isEnum"].Value<bool> ());
+			Assert.Equal (class_name, val ["className"]?.Value<string> ());
+			Assert.Equal (descr, val ["description"]?.Value<string> ());
+		}
+
 		[Fact]
 		public async Task InspectLocalsAtBreakpointSite () =>
 			await CheckInspectLocalsAtBreakpointSite (
@@ -300,20 +377,20 @@ namespace DebuggerTests
 				"window.setTimeout(function() { invoke_delegates_test (); }, 1);",
 				test_fn: (locals) => {
 					CheckObject (locals, "fn_func", "System.Func<Math, bool>");
-					CheckObject (locals, "fn_func_null", "System.Func<Math, bool>", subtype: "null");
+					CheckObject (locals, "fn_func_null", "System.Func<Math, bool>", is_null: true);
 					CheckArray (locals, "fn_func_arr", "System.Func<Math, bool>[]");
 					CheckFunction (locals, "fn_del", "Math.IsMathNull");
-					CheckObject (locals, "fn_del_null", "Math.IsMathNull", subtype: "null");
+					CheckObject (locals, "fn_del_null", "Math.IsMathNull", is_null: true);
 					CheckArray (locals, "fn_del_arr", "Math.IsMathNull[]");
 
 					// Unused locals
-					CheckObject (locals, "fn_func_unused", "System.Func<Math, bool>", subtype: "null");
-					CheckObject (locals, "fn_func_null_unused", "System.Func<Math, bool>", subtype: "null");
-					CheckObject (locals, "fn_func_arr_unused", "System.Func<Math, bool>[]", subtype: "null");
+					CheckObject (locals, "fn_func_unused", "System.Func<Math, bool>", is_null: true);
+					CheckObject (locals, "fn_func_null_unused", "System.Func<Math, bool>", is_null: true);
+					CheckObject (locals, "fn_func_arr_unused", "System.Func<Math, bool>[]", is_null: true);
 
-					CheckObject (locals, "fn_del_unused", "Math.IsMathNull", subtype: "null");
-					CheckObject (locals, "fn_del_null_unused", "Math.IsMathNull", subtype: "null");
-					CheckObject (locals, "fn_del_arr_unused", "Math.IsMathNull[]", subtype: "null");
+					CheckObject (locals, "fn_del_unused", "Math.IsMathNull", is_null: true);
+					CheckObject (locals, "fn_del_null_unused", "Math.IsMathNull", is_null: true);
+					CheckObject (locals, "fn_del_arr_unused", "Math.IsMathNull[]", is_null: true);
 				}
 			);
 
@@ -324,17 +401,17 @@ namespace DebuggerTests
 				"window.setTimeout(function() { invoke_generic_types_test (); }, 1);",
 				test_fn: (locals) => {
 					CheckObject (locals, "list", "System.Collections.Generic.Dictionary<Math[], Math.IsMathNull>");
-					CheckObject (locals, "list_null", "System.Collections.Generic.Dictionary<Math[], Math.IsMathNull>", subtype: "null");
+					CheckObject (locals, "list_null", "System.Collections.Generic.Dictionary<Math[], Math.IsMathNull>", is_null: true);
 
 					CheckArray (locals, "list_arr", "System.Collections.Generic.Dictionary<Math[], Math.IsMathNull>[]");
-					CheckObject (locals, "list_arr_null", "System.Collections.Generic.Dictionary<Math[], Math.IsMathNull>[]", subtype: "null");
+					CheckObject (locals, "list_arr_null", "System.Collections.Generic.Dictionary<Math[], Math.IsMathNull>[]", is_null: true);
 
 					// Unused locals
-					CheckObject (locals, "list_unused", "System.Collections.Generic.Dictionary<Math[], Math.IsMathNull>", subtype: "null");
-					CheckObject (locals, "list_null_unused", "System.Collections.Generic.Dictionary<Math[], Math.IsMathNull>", subtype: "null");
+					CheckObject (locals, "list_unused", "System.Collections.Generic.Dictionary<Math[], Math.IsMathNull>", is_null: true);
+					CheckObject (locals, "list_null_unused", "System.Collections.Generic.Dictionary<Math[], Math.IsMathNull>", is_null: true);
 
-					CheckObject (locals, "list_arr_unused", "System.Collections.Generic.Dictionary<Math[], Math.IsMathNull>[]", subtype: "null");
-					CheckObject (locals, "list_arr_null_unused", "System.Collections.Generic.Dictionary<Math[], Math.IsMathNull>[]", subtype: "null");
+					CheckObject (locals, "list_arr_unused", "System.Collections.Generic.Dictionary<Math[], Math.IsMathNull>[]", is_null: true);
+					CheckObject (locals, "list_arr_null_unused", "System.Collections.Generic.Dictionary<Math[], Math.IsMathNull>[]", is_null: true);
 				}
 			);
 
@@ -345,7 +422,7 @@ namespace DebuggerTests
 
 			await Ready ();
 			await insp.Ready (async (cli, token) => {
-				var ctx = new DebugTestContext (cli, insp, token, scripts);
+				ctx = new DebugTestContext (cli, insp, token, scripts);
 
 				var bp = await SetBreakpoint (url_key, line, column, ctx);
 
@@ -379,7 +456,7 @@ namespace DebuggerTests
 
 			await Ready ();
 			await insp.Ready (async (cli, token) => {
-				var ctx = new DebugTestContext (cli, insp, token, scripts);
+				ctx = new DebugTestContext (cli, insp, token, scripts);
 
 				var bp = await SetBreakpoint ("dotnet://debugger-test.dll/debugger-test.cs", 41, 2, ctx);
 
@@ -401,6 +478,7 @@ namespace DebuggerTests
 							objectId = "dotnet:scope:23490871",
 						});
 
+						// FIXME: um this is likely failing .. or timign out? how does this work at all?
 						var frame_props = await cli.SendCommand ("Runtime.getProperties", get_prop_req, token);
 						Assert.True (frame_props.IsErr);
 					}
@@ -508,17 +586,26 @@ namespace DebuggerTests
 				var debugger_test_loc = "dotnet://debugger-test.dll/debugger-test.cs";
 
 				// Will stop in Complex.DoEvenMoreStuff
-				var wait_res = await EvaluateAndCheck (
+				var pause_location = await EvaluateAndCheck (
 					"window.setTimeout(function() { invoke_use_complex (); }, 1);",
 					dep_cs_loc, 24, 2, "DoEvenMoreStuff", ctx,
 					locals_fn: (locals) => {
-						Assert.Equal (1, locals.Count());
+						Assert.Single (locals);
 						CheckObject (locals, "this", "Simple.Complex");
 					}
 				);
 
+				await CheckObjectOnFrameLocals (pause_location["callFrames"][0], "this", ctx,
+					test_fn: (props) => {
+						Assert.Equal (3, props.Count());
+						CheckNumber (props, "A", 10);
+						CheckString (props, "B", "xx");
+						CheckObject (props, "c", "object");
+					}
+				);
+
 				// Check UseComplex frame
-				await CheckLocalsOnFrame (wait_res ["callFrames"][3], debugger_test_loc, 17, 2, "UseComplex", ctx,
+				await CheckLocalsOnFrame (pause_location ["callFrames"][3], debugger_test_loc, 17, 2, "UseComplex", ctx,
 					test_fn: (locals_m1) => {
 						Assert.Equal (7, locals_m1.Count());
 
@@ -532,9 +619,18 @@ namespace DebuggerTests
 					}
 				);
 
-				wait_res = await StepAndCheck (StepKind.Over, dep_cs_loc, 16, 2, "DoStuff", ctx, times: 2);
+				await CheckObjectOnFrameLocals (pause_location["callFrames"][3], "complex", ctx,
+					test_fn: (props) => {
+						Assert.Equal (3, props.Count());
+						CheckNumber (props, "A", 10);
+						CheckString (props, "B", "xx");
+						CheckObject (props, "c", "object");
+					}
+				);
+
+				pause_location = await StepAndCheck (StepKind.Over, dep_cs_loc, 16, 2, "DoStuff", ctx, times: 2);
 				// Check UseComplex frame again
-				await CheckLocalsOnFrame (wait_res ["callFrames"][1], debugger_test_loc, 17, 2, "UseComplex", ctx,
+				await CheckLocalsOnFrame (pause_location ["callFrames"][1], debugger_test_loc, 17, 2, "UseComplex", ctx,
 					test_fn: (locals_m1) => {
 						Assert.Equal (7, locals_m1.Count());
 
@@ -545,6 +641,15 @@ namespace DebuggerTests
 						CheckNumber (locals_m1, "d", 50);
 						CheckNumber (locals_m1, "e", 60);
 						CheckNumber (locals_m1, "f", 0);
+					}
+				);
+
+				await CheckObjectOnFrameLocals (pause_location["callFrames"][1], "complex", ctx,
+					test_fn: (props) => {
+						Assert.Equal (3, props.Count());
+						CheckNumber (props, "A", 10);
+						CheckString (props, "B", "xx");
+						CheckObject (props, "c", "object");
 					}
 				);
 			});
@@ -572,10 +677,38 @@ namespace DebuggerTests
 						CheckNumber (locals, "i", 5);
 						CheckNumber (locals, "j", 24);
 						CheckString (locals, "foo_str", "foo");
+						//FIXME: check members for this
 						CheckObject (locals, "this", "Math.NestedInMath");
 					}
 				);
 
+				var this_props = await CheckObjectOnFrameLocals (wait_res["callFrames"][0], "this", ctx,
+					test_fn: (props) => {
+						Assert.Equal (2, props.Count());
+						CheckObject (props, "m", "Math");
+						CheckValueType (props, "SimpleStructProperty", "Math.SimpleStruct");
+					}
+				);
+
+				//FIXME: um previous frames stuff!
+				var ss_props = await CheckObjectOnLocals (this_props, "SimpleStructProperty", ctx,
+					test_fn: (props) => {
+						Console.WriteLine ($"--- SimpleStructProperty's props: {props.ToString ()}");
+						Assert.Equal (6, props.Count());
+						CheckNumber (props, "num", 0xDDEEFFA);
+						CheckString (props, "str_member", "SimpleStruct..ctor got str: set in InnerMethod");
+						CheckValueType (props, "dt", "System.DateTime");
+						//FIXME: check fields
+						CheckValueType (props, "gs", "Math.GenericStruct<System.DateTime>");
+						CheckObject (props, "m", "Math");
+						//FIXME: check fields
+						CheckValueType (props, "another_struct", "Math.AnotherStruct");
+					}
+				);
+
+				await CheckDateTime (ss_props, "dt", new DateTime (2020, 1, 2, 3, 5, 6), ctx);
+
+#if false
 				// Check OuterMethod frame
 				await CheckLocalsOnFrame (wait_res ["callFrames"][1], debugger_test_loc, 76, 2, "OuterMethod", ctx,
 					test_fn: (locals_m1) => {
@@ -637,6 +770,7 @@ namespace DebuggerTests
 						CheckObject (locals, "nim", "Math.NestedInMath");
 					}
 				);
+#endif
 			});
 		}
 
@@ -679,6 +813,7 @@ namespace DebuggerTests
 
 				// Step into InnerMethod
 				await StepAndCheck (StepKind.Into, "dotnet://debugger-test.dll/debugger-test.cs", 94, 2, "InnerMethod", ctx);
+				Console.WriteLine ($"--------------- calling stepAndCheck ---------------");
 				await StepAndCheck (StepKind.Over, "dotnet://debugger-test.dll/debugger-test.cs", 98, 3, "InnerMethod", ctx, times: 5,
 					locals_fn: (locals) => {
 						Assert.Equal (4, locals.Count());
@@ -690,8 +825,9 @@ namespace DebuggerTests
 					}
 				);
 
+				Console.WriteLine ($"--------------- calling stepAndCheck FOR stepping to outerMethod---------------");
 				// Step back to OuterMethod
-				await StepAndCheck (StepKind.Over, "dotnet://debugger-test.dll/debugger-test.cs", 77, 2, "OuterMethod", ctx, times: 5,
+				await StepAndCheck (StepKind.Over, "dotnet://debugger-test.dll/debugger-test.cs", 77, 2, "OuterMethod", ctx, times: 6,
 					locals_fn: (locals) => {
 						Assert.Equal (5, locals.Count());
 
@@ -713,7 +849,7 @@ namespace DebuggerTests
 
 			await Ready();
 			await insp.Ready (async (cli, token) => {
-				var ctx = new DebugTestContext (cli, insp, token, scripts);
+				ctx = new DebugTestContext (cli, insp, token, scripts);
 				var debugger_test_loc = "dotnet://debugger-test.dll/debugger-test.cs";
 
 				await SetBreakpoint (debugger_test_loc, 108, 3, ctx);
@@ -734,16 +870,26 @@ namespace DebuggerTests
 
 				// TODO: previous frames have async machinery details, so no point checking that right now
 
-				await SendCommandAndCheck (null, "Debugger.resume", debugger_test_loc, 123, 3, "AsyncMethodNoReturn", ctx,
+				var pause_loc = await SendCommandAndCheck (null, "Debugger.resume", debugger_test_loc, 123, 3, "AsyncMethodNoReturn", ctx,
 					locals_fn: (locals) => {
 						Assert.Equal (4, locals.Count());
 						CheckString (locals, "str", "AsyncMethodNoReturn's local");
 						CheckObject (locals, "this", "Math.NestedInMath");
-						CheckObject (locals, "ss", "Math.SimpleStruct", subtype: "null");
+						//FIXME: check fields
+						CheckValueType (locals, "ss", "Math.SimpleStruct");
 						CheckArray (locals, "ss_arr", "Math.SimpleStruct[]");
 						// TODO: struct fields
 					}
 				);
+
+				await CheckObjectOnFrameLocals (pause_loc ["callFrames"][0], "this", ctx,
+					test_fn: (props) => {
+						Assert.Equal (2, props.Count ());
+						CheckObject (props, "m", "Math");
+						CheckValueType (props, "SimpleStructProperty", "Math.SimpleStruct");
+					}
+				);
+
 				// TODO: Check `this` properties
 			});
 		}
@@ -756,29 +902,95 @@ namespace DebuggerTests
 
 			await Ready();
 			await insp.Ready (async (cli, token) => {
-				var ctx = new DebugTestContext (cli, insp, token, scripts);
+				ctx = new DebugTestContext (cli, insp, token, scripts);
 				var debugger_test_loc = "dotnet://debugger-test.dll/debugger-test.cs";
 
 				await SetBreakpoint (debugger_test_loc, 139, 3, ctx);
 
-				var wait_res = await EvaluateAndCheck (
+				var pause_location = await EvaluateAndCheck (
 					"window.setTimeout(function() { invoke_method_with_structs(); }, 1);",
 					debugger_test_loc, 139, 3, "MethodWithStructs", ctx,
 					locals_fn: (locals) => {
-						Assert.Equal (4, locals.Count());
-						CheckObject (locals, "m", "Math", subtype: "null");
-						CheckObject (locals, "ss", "Math.SimpleStruct", subtype: "null");
-						CheckObject (locals, "gs", "Math.GenericStruct<Math>", subtype: "null");
+						Assert.Equal (4, locals.Count ());
+						CheckObject (locals, "m_local", "Math");
+						CheckValueType (locals, "ss_local", "Math.SimpleStruct");
+						CheckValueType (locals, "gs", "Math.GenericStruct<Math>");
 						CheckArray (locals, "ss_arr", "Math.SimpleStruct[]");
+					}
+				);
+
+				// Check m_local's properties
+				var m_local_props = await CheckObjectOnFrameLocals (pause_location ["callFrames"][0], "m_local", ctx,
+					test_fn: (props) => {
+						Console.WriteLine ($"--- m_local's props: {props.ToString ()}");
+						Assert.Equal (2, props.Count());
+
+						CheckString (props, "StringField", "value set in MethodWithStructs");
+						CheckValueType (props, "StructFieldInMathClass", "Math.AnotherStruct");
+					}
+				);
+
+				Console.WriteLine ($"--------------------------------------- Fetching props for StructFieldInMathClass --------------");
+				// Check m_local.StructFieldInMathClass's properties
+				await CheckObjectOnLocals (m_local_props, "StructFieldInMathClass", ctx,
+					test_fn: (props) => {
+						Console.WriteLine ($"--- StructFieldInMathClass's props: {props.ToString ()}");
+						Assert.Equal (4, props.Count());
+						
+						//props.HasString ("Name", "Set on math.StructFieldInMathClass in MethodWithStructs");
+						//CheckBool (props, "BoolField", false);
+						//CheckEnum (props, "RGB", "Math.RGB", "Blue");
+						//CheckEnum (props, "Options", "Math.Options", "Option3");
+
+					}
+				);
+
+				// Check SimpleStruct
+				var ss_props = await CheckObjectOnFrameLocals (pause_location ["callFrames"][0], "ss_local", ctx,
+					test_fn: (props) => {
+						Console.WriteLine ($"--- SimpleStructProperty's props: {props.ToString ()}");
+						Assert.Equal (6, props.Count());
+						props.HasNumber ("num", 0xDDEEFFA);
+						props.HasString ("str_member", "SimpleStruct..ctor got str: set in MethodWithStructs");
+						props.HasObject ("dt", "System.DateTime");
+
+						//FIXME: check fields
+						props.HasObject ("gs", "Math.GenericStruct<System.DateTime>");
+						props.HasObject ("m", "Math");
+						props.HasObject ("another_struct", "Math.AnotherStruct");
+					}
+				);
+
+				// Check SimpleStruct members
+				await CheckObjectOnLocals (ss_props, "another_struct", ctx,
+					test_fn: (props) => {
+						Assert.Equal (4, props.Count());
+						props.HasString ("Name", "Name for AnotherStruct set in SimpleStruct..ctor");
+						CheckBool (props, "BoolField", false);
+						CheckEnum (props, "RGB", "Math.RGB", "Green");
+						CheckEnum (props, "Options", "Math.Options", "Option2");
+					}
+				);
+
+				await CheckDateTime (ss_props, "dt", new DateTime (2020, 1, 2, 3, 5, 6), ctx);
+				
+				await CheckObjectOnLocals (ss_props, "gs", ctx,
+					test_fn: (props) => {
+						Assert.Equal (2, props.Count());
+						props.HasString ("StringField", "StringField member of a GenericStruct");
+						CheckObject (props, "List", "System.Collections.Generic.List<System.DateTime>");
 					}
 				);
 			});
 		}
+
 		async Task<JObject> StepAndCheck (StepKind kind, string script_loc, int line, int column, string function_name, DebugTestContext ctx,
 							Func<JObject, Task> wait_for_event_fn = null, Action<JToken> locals_fn = null, int times=1)
 		{
 			for (int i = 0; i < times - 1; i ++) {
-				await SendCommandAndCheck (null, $"Debugger.step{kind.ToString ()}", null, -1, -1, null, ctx);
+				var res = await SendCommandAndCheck (null, $"Debugger.step{kind.ToString ()}", null, -1, -1, null, ctx);
+				//Console.WriteLine ($"Step #{i}, res: {res["callFrames"]?[0]?["location"]}");
+				Console.WriteLine ($"Step #{i}, res: {res["callFrames"]?[0]}");
 			}
 
 			// Check for method/line etc only at the last step
@@ -819,6 +1031,35 @@ namespace DebuggerTests
 			return wait_res;
 		}
 
+		void CheckLocals (JArray expected, JToken actual)
+		{
+			int num = expected.Count ();
+			Assert.Equal (num, actual.Count());
+			for (int i = 0; i < num; i ++) {
+				var ejt = expected [i];
+				if (ejt ["skip"]?.Value<bool> () == true)
+					continue;
+
+				switch (ejt ["type"].Value<string> ()) {
+				case "object":
+					CheckObject (actual, ejt ["name"]?.Value<string> (), ejt ["typeName"]?.Value<string> (), subtype: ejt ["subtype"]?.Value<string> ());
+					break;
+				case "array": 
+					CheckArray (actual, ejt ["name"]?.Value<string> (), ejt ["typeName"]?.Value<string> ());
+					break;
+				case "number":
+					CheckNumber (actual, ejt ["name"]?.Value<string> (), ejt ["value"].Value<int> ());
+					break;
+				case "string":
+					CheckString (actual, ejt ["name"]?.Value<string> (), ejt ["value"].Value<string> ());
+					break;
+				default:
+					throw new NotImplementedException (ejt ["type"].Value<string> ());
+				}
+
+			}
+		}
+
 		async Task CheckLocalsOnFrame (JToken frame, string script_loc, int line, int column, string function_name, DebugTestContext ctx, Action<JToken> test_fn = null)
 		{
 			CheckLocation (script_loc, line, column, ctx.scripts, frame ["location"]);
@@ -827,26 +1068,52 @@ namespace DebuggerTests
 			await CheckLocalsOnFrame (frame, ctx, test_fn);
 		}
 
-		async Task CheckLocalsOnFrame (JToken frame, DebugTestContext ctx, Action<JToken> test_fn = null)
+		async Task CheckLocalsOnFrame (JToken frame, DebugTestContext ctx, Action<JToken> test_fn)
+			=> test_fn (await GetProperties (frame ["callFrameId"].Value<string> (), ctx));
+
+		async Task<JToken> CheckObjectOnFrameLocals (JToken frame, string name, DebugTestContext ctx, Action<JToken> test_fn)
 		{
+			//Console.WriteLine ($"GetObjectPropertiesFor frame: {frame["callFrameId"]} object name {name}");
+			var locals = await GetProperties (frame ["callFrameId"].Value<string> (), ctx);
+			//Console.WriteLine ($"GetPropertiesForObject: locals: {locals.ToString ()}");
+
+			return await CheckObjectOnLocals (locals, name, ctx, test_fn);
+		}
+
+		async Task<JToken> CheckObjectOnLocals (JToken locals, string name, DebugTestContext ctx, Action<JToken> test_fn)
+		{
+			var obj = locals.Where (jt => jt ["name"]?.Value<string> () == name)// FIXME: just temporary, to handle valuetypes && jt ["value"]["type"]?.Value<string> () == "object")
+					.FirstOrDefault ();
+			if (obj == null)
+				Assert.True (false, $"Could not find a var with name {name} and type object");
+
+			var props = await GetProperties (obj ["value"]["objectId"].Value<string> (), ctx);
+			if (test_fn != null) {
+				try {
+					test_fn (props);
+				} catch (Exception) {
+					Console.WriteLine ($"Failed for properties: {props}");
+					throw;
+				}
+			}
+
+			return props;
+		}
+
+		async Task<JToken> GetProperties (string id, DebugTestContext ctx)
+		{
+			Console.WriteLine ($"GetProperties id: {id}");
 			var get_prop_req = JObject.FromObject (new {
-				objectId = frame["callFrameId"]
+				objectId = id
 			});
 
 			var frame_props = await ctx.cli.SendCommand ("Runtime.getProperties", get_prop_req, ctx.token);
 			if (!frame_props.IsOk)
 				Assert.True (false, $"Runtime.getProperties failed for {get_prop_req.ToString ()}");
 
-			if (test_fn == null)
-				return;
-
 			var locals = frame_props.Value ["result"];
-			try {
-				test_fn (locals);
-			} catch {
-				Console.WriteLine ($"Failed trying to check locals: {locals.ToString ()}");
-				throw;
-			}
+			Console.WriteLine ($"** GetProperties got the result back: locals: {locals.ToString ()}");
+			return locals;
 		}
 
 		async Task<Result> SetBreakpoint (string url_key, int line, int column, DebugTestContext ctx, bool expect_ok=true)
@@ -880,6 +1147,107 @@ namespace DebuggerTests
 				this.token = token;
 				this.scripts = scripts;
 		}
+	}
+
+	static class TestExtensions
+	{
+		public static void HasNumber (this JToken locals, string name, int expected_val)
+		{
+			foreach (var l in locals) {
+				if (name != l["name"]?.Value<string> ())
+					continue;
+				var val = l["value"];
+				Assert.Equal ("number", val ["type"]?.Value<string> ());
+				Assert.Equal (expected_val, val["value"]?.Value <int> ());
+				return;
+			}
+			Assert.True(false, $"Could not find variable '{name}'");
+		}
+
+		public static void HasString (this JToken locals, string name, string value)
+		{
+			foreach (var l in locals) {
+				if (name != l["name"]?.Value<string> ())
+					continue;
+				var val = l["value"];
+				if (value == null) {
+						Assert.Equal ("object", val ["type"]?.Value<string> ());
+						Assert.Equal ("null", val["subtype"]?.Value<string> ());
+				} else {
+						Assert.Equal ("string", val ["type"]?.Value<string> ());
+						Assert.Equal (value, val["value"]?.Value <string> ());
+				}
+				return;
+			}
+			Assert.True(false, $"Could not find variable '{name}'");
+		}
+
+		public static JToken HasObject (this JToken locals, string name, string class_name, string subtype=null)
+		{
+			foreach (var l in locals) {
+				if (name != l["name"]?.Value<string> ())
+					continue;
+
+				var val = l["value"];
+				Console.WriteLine ($"-- HasObject: {val.ToString ()}");
+				//FIXME:
+				var type = val ["type"]?.Value<string> ();
+				if (type != "object" && type != "valuetype")
+					Assert.True (false, $"Expected an object or valuetype, but got {type}");
+				//Assert.Equal ("object", val ["type"]?.Value<string> ());
+				Assert.Equal (class_name, val ["className"]?.Value<string> ());
+				Assert.Equal (subtype, val ["subtype"]?.Value<string> ());
+				return l;
+			}
+			Assert.True(false, $"Could not find variable '{name}'");
+			return null;
+		}
+
+		public static void HasValueType (this JToken locals, string name, string class_name) {
+			foreach (var l in locals) {
+				if (name != l["name"]?.Value<string> ())
+					continue;
+
+				var val = l["value"];
+				Console.WriteLine ($"-- HasObject: {val.ToString ()}");
+				Assert.Equal ("valuetype", val ["type"]?.Value<string> ());
+				Assert.Equal (class_name, val ["className"]?.Value<string> ());
+				return;
+			}
+			Assert.True(false, $"Could not find variable '{name}'");
+		}
+
+		public static void HasArray (this JToken locals, string name, string class_name) {
+			foreach (var l in locals) {
+				if (name != l["name"]?.Value<string> ())
+					continue;
+
+				var val = l["value"];
+				Assert.Equal ("object", val ["type"]?.Value<string> ());
+				Assert.Equal ("array", val ["subtype"]?.Value<string> ());
+				Assert.Equal (class_name, val ["className"]?.Value<string> ());
+
+				//FIXME: elements?
+				return;
+			}
+			Assert.True(false, $"Could not find variable '{name}'");
+		}
+
+		public static void HasFunction (this JToken locals, string name, string description, string subtype=null) {
+			Console.WriteLine ($"** Locals: {locals.ToString ()}");
+			foreach (var l in locals) {
+				if (name != l["name"]?.Value<string> ())
+					continue;
+
+				var val = l["value"];
+				Assert.Equal ("function", val ["type"]?.Value<string> ());
+				Assert.Equal (description, val ["description"]?.Value<string> ());
+				Assert.Equal (subtype, val ["subtype"]?.Value<string> ());
+				return;
+			}
+			Assert.True(false, $"Could not find variable '{name}'");
+		}
+
 	}
 
 	enum StepKind

@@ -30,6 +30,15 @@ namespace WebAssembly.Net.Debugging {
 				return onEvent (res ["method"].Value<string> (), res ["params"] as JObject, token);
 			var id = res ["id"].Value<int> ();
 			var idx = pending_cmds.FindIndex (e => e.Item1 == id);
+			if (idx < 0) {
+				Console.WriteLine ($"-- couldn't find a pending cmd");
+				foreach (var pc in pending_cmds)
+					Console.WriteLine ($"\tpc: {pc.Item1}");
+				throw new ArgumentException ($"Cannot find a pending command with id: {id}");
+			} else {
+				Console.WriteLine ($"HandleMessage: For id {id}, got msg: {msg}, removing the pending cmd");
+			}
+
 			var item = pending_cmds [idx];
 			pending_cmds.RemoveAt (idx);
 			item.Item2.SetResult (Result.FromJson (res));
@@ -63,6 +72,7 @@ namespace WebAssembly.Net.Debugging {
 
 			var str = o.ToString ();
 			//Log ("protocol", $"SendCommand: id: {id} method: {method} params: {args}");
+			Console.WriteLine ($"SendCommand: id: {id} method: {method} params: {args}");
 
 			var bytes = Encoding.UTF8.GetBytes (str);
 			Send (bytes, token);

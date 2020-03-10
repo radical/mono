@@ -640,7 +640,7 @@ run-all-%:
 	$(MAKE) -C . run-jsc-$*
 
 run-debugger-tests: build-debugger-test-app build-dbg-testsuite
-	dotnet test DebuggerTestSuite
+	dotnet test DebuggerTestSuite $(TEST_ARGS)
 
 run-browser-tests: build-browser-test-suite
 	(cd $(BROWSER_TEST) && $(NPM) test)

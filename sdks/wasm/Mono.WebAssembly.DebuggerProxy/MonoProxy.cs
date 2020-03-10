@@ -36,8 +36,8 @@ namespace WebAssembly.Net.Debugging {
 		public static MonoCommands ClearAllBreakpoints ()
 			=> new MonoCommands ("MONO.mono_wasm_clear_all_breakpoints()");
 
-		public static MonoCommands GetObjectProperties (int objectId)
-			=> new MonoCommands ($"MONO.mono_wasm_get_object_properties({objectId})");
+		public static MonoCommands GetObjectProperties (int objectId, bool expandValueTypes)
+			=> new MonoCommands ($"MONO.mono_wasm_get_object_properties({objectId}, { (expandValueTypes ? "true" : "false") })");
 
 		public static MonoCommands GetArrayValues (int objectId)
 			=> new MonoCommands ($"MONO.mono_wasm_get_array_values({objectId})");
@@ -123,6 +123,9 @@ namespace WebAssembly.Net.Debugging {
 		internal DebugStore store;
 		public TaskCompletionSource<DebugStore> Source { get; } = new TaskCompletionSource<DebugStore> ();
 
+		// FIXME: juse use the int for the id
+		public Dictionary<string, JToken> ValueTypeValues = new Dictionary<string, JToken> ();
+
 		public DebugStore Store {
 			get {
 				if (store == null || !Source.Task.IsCompleted)
@@ -140,10 +143,15 @@ namespace WebAssembly.Net.Debugging {
 
 		ExecutionContext GetContext (SessionId sessionId)
 		{
+			Console.WriteLine ($"-- GetContext");
 			var id = sessionId?.sessionId ?? "default";
-			if (contexts.TryGetValue (id, out var context))
+			Console.WriteLine ($"\tid: {id}, contexts: {(contexts == null ? "null" : "not null")} ");
+			if (contexts.TryGetValue (id, out var context)) {
+				Console.WriteLine ($"\t\tfoudn it, {context}");
 				return context;
+			}
 
+			Console.WriteLine ($"* GetContext couldn't find a session *");
 			throw new ArgumentException ($"Invalid Session: \"{id}\"", nameof (sessionId));
 		}
 
@@ -314,6 +322,9 @@ namespace WebAssembly.Net.Debugging {
 
 			case "Runtime.getProperties": {
 					var objId = args? ["objectId"]?.Value<string> ();
+
+					Console.WriteLine ($"AcceptCommand: runtime.getProperties objId: {objId}");
+					Console.WriteLine ($"args: {args}");
 					if (objId.StartsWith ("dotnet:", StringComparison.Ordinal)) {
 						var parts = objId.Split (new char [] { ':' });
 						if (parts.Length < 3)
@@ -324,11 +335,27 @@ namespace WebAssembly.Net.Debugging {
 							break;
 							}
 						case "object": {
-							await GetDetails (id, MonoCommands.GetObjectProperties (int.Parse (parts[2])), token);
+							await GetDetails (id, MonoCommands.GetObjectProperties (int.Parse (parts[2]), expandValueTypes: false), token: token);
 							break;
 							}
 						case "array": {
 							await GetDetails (id, MonoCommands.GetArrayValues (int.Parse (parts [2])), token);
+							break;
+							}
+						case "valuetype": {
+							Console.WriteLine ($"** Runtime.getProperties, objId: {objId}, let's check if we have it already");
+							if (!ValueTypeIsCached (id, objId)) {
+								if (parts.Length < 4)
+									// FIXME: ShouldNotReachException?!
+									throw new ArgumentException ("Could not find a cached value for {objId}, and this isn't a valuetype in an object, so can't expand it now!");
+
+								Console.WriteLine ($"** Runtime.getProperties {objId}, let's get the whole thing for the object");
+								var containerObjId = int.Parse (parts [2]);
+								await GetDetails (id, MonoCommands.GetObjectProperties (containerObjId, expandValueTypes: true), token: token, send_response: false);
+								Console.WriteLine ($"NOW, let's try {objId} again");
+							}
+
+							GetDetailsForValueType (id, objId, token);
 							break;
 							}
 						}
@@ -502,7 +529,7 @@ namespace WebAssembly.Net.Debugging {
 
 		static string FormatFieldName (string name)
 		{
-			if (name.Contains("k__BackingField", StringComparison.Ordinal)) {
+			if (name?.Contains("k__BackingField", StringComparison.Ordinal) == true) {
 				return name.Replace("k__BackingField", "", StringComparison.Ordinal)
 					.Replace("<", "", StringComparison.Ordinal)
 					.Replace(">", "", StringComparison.Ordinal);
@@ -510,59 +537,128 @@ namespace WebAssembly.Net.Debugging {
 			return name;
 		}
 
-		async Task GetDetails(MessageId msg_id, MonoCommands cmd, CancellationToken token)
+		int next_valuetype_id = 0;
+
+		async Task GetDetails(MessageId msg_id, MonoCommands cmd, CancellationToken token, bool send_response = true)
 		{
+			Console.WriteLine ($"GetDetails: cmd: {cmd.expression}, msg_id: {msg_id.id}, sessionid: {msg_id.sessionId}");
 			var res = await SendMonoCommand(msg_id, cmd, token);
 
 			//if we fail we just buble that to the IDE (and let it panic over it)
 			if (res.IsErr) {
+				Console.WriteLine ($"** GetDetails FAILED");
 				SendResponse(msg_id, res, token);
 				return;
 			}
 
 			try {
-				var values = res.Value?["result"]?["value"]?.Values<JObject>().ToArray() ?? Array.Empty<JObject>();
-				var var_list = new List<JObject>();
-
-				// Trying to inspect the stack frame for DotNetDispatcher::InvokeSynchronously
-				// results in a "Memory access out of bounds", causing 'values' to be null,
-				// so skip returning variable values in that case.
-				for (int i = 0; i < values.Length; i+=2)
-				{
-					string fieldName = FormatFieldName ((string)values[i]["name"]);
-					var value = values [i + 1]? ["value"];
-					if (((string)value ["description"]) == null)
-						value ["description"] = value ["value"]?.ToString ();
-
-					var_list.Add(JObject.FromObject(new {
-						name = fieldName,
-						value
-					}));
-
+				Console.WriteLine ($"--- GetDetails res: {res}");
+ 
+				var var_list = res.Value?.Values<JObject>("result/value").ToArray();
+				if (var_list.Length > 0) {
+					var ctx = GetContext (msg_id);
+					Array.ForEach (var_list, (jo => { jo ["name"] = FormatFieldName (jo ["name"].Value<string> ()); } ));
+					ExtractAndCacheValueTypes (ctx, var_list);
 				}
+
+				if (!send_response)
+					return;
+
 				var response = JObject.FromObject(new
 				{
 					result = var_list
 				});
+				Console.WriteLine ($"--- GetDetails sending back var_list with fixed up vt ids: {response}");
 
 				SendResponse(msg_id, Result.Ok(response), token);
 			} catch (Exception e) {
-				Log ("verbose", $"failed to parse {res.Value} - {e.Message}");
+				Console.WriteLine ($"failed to parse {res.Value} - {e.ToString ()}");
+				if (!send_response)
+					throw;
+
 				SendResponse(msg_id, Result.Exception(e), token);
 			}
+		}
 
+		IEnumerable<JObject> ExtractAndCacheValueTypes (ExecutionContext ctx, IEnumerable<JObject> var_list)
+		{
+			Console.WriteLine ($">> ExtractAndCacheValueTypes");
+			foreach (var jo in var_list) {
+				Console.WriteLine ($"======= looking at jo: {jo}");
+				var value = jo["value"]?.Value<JObject> ();
+				if (string.Compare (value ["type"]?.Value<string> (), "object") != 0 ||
+					value ["isValueType"] == null || value ["isValueType"].Value<bool> () == false)
+					continue;
+
+				var members = value ["members"];
+				var members_arr = members?.Values<JObject>().ToArray() ?? Array.Empty<JObject>();
+				var objectId = value ["objectId"]?.Value<string> ();
+
+				// FIXME: magic value
+				if (objectId == "dotnet:valuetype:-99") {
+					objectId = $"dotnet:valuetype:{next_valuetype_id}";
+					next_valuetype_id ++;
+					value ["objectId"] = objectId;
+				} else {
+					if (members_arr.Length == 0) {
+						Console.WriteLine ($"\tobjectId: {objectId} is vt, but no members yet, so, ignoring.. it will be expanded in future");
+						// got a vt_in_obj, but no members.. it hasn't been expanded yet!
+						continue;
+					} else {
+						Console.WriteLine ($"\tobjectId: {objectId} is expanded now, yay, let's cache that");
+					}
+				}
+
+				ExtractAndCacheValueTypes (ctx, members_arr);
+
+				var json = JArray.FromObject (members_arr);
+				ctx.ValueTypeValues [ objectId ] = json;
+				value.Remove ("members");
+				Console.WriteLine ($"\t ADDING [ {objectId} ] = {json}");
+			}
+			Console.WriteLine ($"<< ExtractAndCacheValueTypes");
+
+			return var_list;
+		}
+
+		bool ValueTypeIsCached (MessageId msg_id, string object_id)
+			=> GetContext (msg_id).ValueTypeValues.ContainsKey (object_id);
+
+		bool GetDetailsForValueType (MessageId msg_id, string object_id, CancellationToken token)
+		{
+			var ctx = GetContext (msg_id);
+			if (ctx.ValueTypeValues.TryGetValue (object_id, out var var_list)) {
+				var response = JObject.FromObject(new
+				{
+					result = var_list
+				});
+				Console.WriteLine ($"** GetDetailsForValueType returning {response}");
+
+				SendResponse(msg_id, Result.Ok(response), token);
+				return true;
+			} else {
+				var response = JObject.FromObject(new
+				{
+					result = $"Unable to get details for {object_id}"
+				});
+				//Console.WriteLine ($"** GetDetailsForValueType returning {response}");
+
+				SendResponse(msg_id, Result.Err(response), token);
+				return false;
+			}
 		}
 
 		async Task GetScopeProperties (MessageId msg_id, int scope_id, CancellationToken token)
 		{
-
 			try {
-				var scope = GetContext (msg_id).CallStack.FirstOrDefault (s => s.Id == scope_id);
+				var ctx = GetContext (msg_id);
+				var scope = ctx.CallStack.FirstOrDefault (s => s.Id == scope_id);
 				var vars = scope.Method.GetLiveVarsAt (scope.Location.CliLocation.Offset);
 
 				var var_ids = vars.Select (v => v.Index).ToArray ();
 				var res = await SendMonoCommand (msg_id, MonoCommands.GetScopeVariables (scope.Id, var_ids), token);
 
+				Console.WriteLine ($"GetScopeProperties: Full response from GetScopeVariables: {res}");
 				//if we fail we just buble that to the IDE (and let it panic over it)
 				if (res.IsErr) {
 					SendResponse (msg_id, res, token);
@@ -570,11 +666,12 @@ namespace WebAssembly.Net.Debugging {
 				}
 
 				var values = res.Value? ["result"]? ["value"]?.Values<JObject> ().ToArray ();
-
 				if(values == null) {
 					SendResponse (msg_id, Result.OkFromObject (new {result = Array.Empty<object> ()}), token);
 					return;
 				}
+
+				ExtractAndCacheValueTypes (ctx, values);
 
 				var var_list = new List<object> ();
 				int i = 0;
@@ -582,16 +679,13 @@ namespace WebAssembly.Net.Debugging {
 				// results in a "Memory access out of bounds", causing 'values' to be null,
 				// so skip returning variable values in that case.
 				while (i < vars.Length && i < values.Length) {
-					var value = values [i] ["value"];
-					if (((string)value ["description"]) == null)
-						value ["description"] = value ["value"]?.ToString ();
-
 					var_list.Add (new {
 						name = vars [i].Name,
-						value
+						value = values [i]["value"]
 					});
 					i++;
 				}
+
 				//Async methods are special in the way that local variables can be lifted to generated class fields
 				//value of "this" comes here either
 				while (i < values.Length) {
@@ -600,18 +694,19 @@ namespace WebAssembly.Net.Debugging {
 					if (name.IndexOf (">", StringComparison.Ordinal) > 0)
 						name = name.Substring (1, name.IndexOf (">", StringComparison.Ordinal) - 1);
 
-					var value = values [i + 1] ["value"];
-					if (((string)value ["description"]) == null)
-						value ["description"] = value ["value"]?.ToString ();
-
-					var_list.Add (new {
-						name,
-						value
-					});
-					i = i + 2;
+					values[i]["name"] = name;
+					var_list.Add (values [i]);
+					i ++;
 				}
 
-				SendResponse (msg_id, Result.OkFromObject (new { result = var_list }), token);
+
+				//Console.WriteLine ($"-- let's try to extract valuetypes");
+				//if (var_list.Count > 0)
+					//ExtractAndCacheValueTypes (ctx, new JArray (var_list).Values<JObject> ());
+
+				var res_to_return = Result.OkFromObject (new { result = var_list });
+				Console.WriteLine ($" GetScopeVariables replying with {res_to_return}");
+				SendResponse (msg_id, res_to_return, token);
 			} catch (Exception exception) {
 				Log ("verbose", $"Error resolving scope properties {exception.Message}");
 				SendResponse (msg_id, Result.Exception (exception), token);
@@ -802,6 +897,34 @@ namespace WebAssembly.Net.Debugging {
 				SendResponse (msg_id, Result.OkFromObject (o), token);
 			}
 			return true;
+		}
+	}
+
+	internal static class JsonExtensions
+	{
+		public static IEnumerable<T> Values<T> (this JToken jt, string path)
+		{
+			Console.WriteLine ($"***** JsonExtensions.Values, jt: {jt}");
+			var cur_obj = jt;
+			foreach (var seg in path?.Split (new char[] {'/'}, StringSplitOptions.RemoveEmptyEntries)) {
+				Console.WriteLine ($"\tchecking {seg}");
+				cur_obj = cur_obj [seg];
+				if (cur_obj == null) {
+					Console.WriteLine ($"\t\terr that was null");
+					yield break;
+				}
+			}
+
+			var jc = cur_obj as JContainer;
+			if (jc == null) {
+				Console.WriteLine ($"\terr.. the final object wasn't a jcontainer. : {cur_obj}");
+				yield break;
+			}
+
+			foreach (var val in jc.Values<T> ()) {
+				Console.WriteLine ($"yay, returning {val}");
+				yield return val;
+			}
 		}
 	}
 }

@@ -2,25 +2,146 @@ using System;
 using System.Linq;
 using System.Net.Http;
 using System.Reflection;
+using System.Threading.Tasks;
 using WebAssembly;
 using WebAssembly.Net.Http.HttpClient;
 
 public class Math {
-	public static int IntAdd (int a, int b) {
+	public static async Task<int> IntAdd (int a, int b) {
 		var cp = new Simple.Complex (10, "hello");
 		int c = a + b;
 		int d = c + b;
 		int e = d + a;
 
+		await new Math ().FooAsync (e);
 		e += cp.DoStuff ();
 
 		return e;
 	}
 
-
 	public int First (int[] x) {
 		return x.FirstOrDefault ();
 	}
+
+	string math_str = "field value";
+	async Task FooAsync (int i)
+	{
+		string s = "before";
+		await Task.Delay(100);
+		s = "after";
+		First (new int[] {4});
+		await Task.Delay(100);
+		Console.WriteLine ($"s: {s}");
+	}
+
+	public async Task<bool> AsyncMethod0 (string s, int i)
+	{
+		string local0 = "value0";
+		await Task.Delay (10);
+		Console.WriteLine ($"* time for the second await, local0: {local0}");
+		await AsyncMethodNoReturn ();
+		return true;
+	}
+
+	public Math ()
+	{
+		ss_field = new SimpleStruct ("Set in math..ctor");
+		ss_field.num = 932;
+		ss_field.another_struct.Name = "another_struct's name set as part of ss_field, in math..ctor";
+
+		dt = DateTime.Now;
+	}
+
+	DateTime dt;
+	SimpleStruct ss_field;
+	public async Task AsyncMethodNoReturn ()
+	{
+		string str = "AsyncMethodNoReturn's local";
+		//Console.WriteLine ($"* field f: {f}");
+		await Task.Delay (10);
+		Console.WriteLine ($"str: {str}, math_Str: {math_str}");
+	}
+
+	public static async Task<bool> AsyncTest (string s, int i)
+	{
+		Console.WriteLine ($"-- AsyncTest ENTER");
+		return await new Math().AsyncMethod0 (s, i);
+	}
+
+	public static void MethodWithStructs ()
+	{
+		var ss = new SimpleStruct ("Set in MethodWithStructs, as a local var");
+		//ss.gs.StringField = "field in GenericStruct";
+
+		var ss_arr = new SimpleStruct [] { new SimpleStruct ("created for an array") };
+		//var gs = new GenericStruct<Math> ();
+		Math m = new Math ();
+		Console.WriteLine ($"math: {m}");
+		Console.WriteLine ($"Using the struct: {ss.dt}, {ss.gs.StringField}, ss_arr: {ss_arr.Length}");
+	}
+
+	public static void MethodWithGenericStruct ()
+	{
+		var gs = new GenericStruct<DateTime> { StringField = "new value set in MethodWithGenericStruct", List = new System.Collections.Generic.List<DateTime> { DateTime.Now } };
+		Console.WriteLine ($"MethodWithGenericStruct: {gs.StringField}, {gs.List.Count}");
+	}
+
+	//public SimpleStruct SimpleStructProperty { get; set; }
+
+}
+
+public struct SimpleStruct
+{
+	public uint num;
+	public string str_member;
+	public DateTime dt;
+	public GenericStruct<DateTime> gs;
+	//public Math m;
+	public AnotherStruct another_struct;
+
+	public SimpleStruct (string str)
+	{
+		str_member = "Fresh string bytes prepending to the arg: " + str;
+		num = 0xDDEEFFAA; //BBCC3377;
+		dt = DateTime.Now;
+		gs = new GenericStruct<DateTime> { StringField = "new value set in SimpleStruct..ctor", List = new System.Collections.Generic.List<DateTime> { DateTime.Now } };
+		//m = new Math ();
+		another_struct = new AnotherStruct {
+			BoolField = false, Name = "Name for AnotherStruct set in SimpleStruct..ctor",
+			RGB = RGB.Green, Options = Options.Option2 };
+	}
+}
+
+public struct GenericStruct<T>
+{
+	public System.Collections.Generic.List<T> List;
+	public string StringField;
+}
+
+public struct AnotherStruct
+{
+	public bool BoolField;
+	public string Name;
+	public RGB RGB;
+	public Options Options;
+}
+
+public enum RGB
+{
+	Red,
+	Green,
+	Blue
+}
+
+[Flags]
+public enum Options
+{
+	None = 0,
+	Option1 = 1,
+	Option2 = 2,
+	Option3 = 4,
+
+	Default = Option1 | Option3
 }
 
 namespace GeoLocation

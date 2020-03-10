@@ -74,6 +74,11 @@ namespace WebAssembly.Net.Debugging {
 				});
 			}
 		}
+
+		public override string ToString ()
+		{
+			return $"[Result: IsOk: {IsOk}, IsErr: {IsErr}, Value: {Value?.ToString ()}, Error: {Error?.ToString ()} ]";
+		}
 	}
 
 	class DevToolsQueue {
@@ -181,7 +186,8 @@ namespace WebAssembly.Net.Debugging {
 		void Send (WebSocket to, JObject o, CancellationToken token)
 		{
 			var sender = browser == to ? "Send-browser" : "Send-ide";
-			Log ("protocol", $"{sender}: {o}");
+			if (o? ["method"]? .Value<string> () != "Runtime.consoleAPICalled")
+				Log ("protocol", $"{sender}: {o}");
 			var bytes = Encoding.UTF8.GetBytes (o.ToString ());
 
 			var queue = GetQueueForSocket (to);
@@ -211,13 +217,14 @@ namespace WebAssembly.Net.Debugging {
 					SendResponseInternal (id, res, token);
 				}
 			} catch (Exception e) {
+				//Console.WriteLine ($"** OnCommand got exception: {e.Message}, setting side_Exception");
 				side_exception.TrySetException (e);
 			}
 		}
 
 		void OnResponse (MessageId id, Result result)
 		{
-			//logger.LogTrace ("got id {0} res {1}", id, result);
+			//Console.WriteLine ("got id {0} res {1}", id.id, result);
 			// Fixme
 			var idx = pending_cmds.FindIndex (e => e.Item1.id == id.id && e.Item1.sessionId == id.sessionId);
 			var item = pending_cmds [idx];
@@ -241,6 +248,8 @@ namespace WebAssembly.Net.Debugging {
 		{
 			Log ("protocol", $"ide: {msg}");
 			if (!string.IsNullOrEmpty (msg)) {
+				if (msg.Contains ("Runtime.getProperties"))
+					Console.WriteLine ($"** ProcessIdeMessage : {msg}");
 				var res = JObject.Parse (msg);
 				pending_ops.Add (OnCommand (new MessageId { id = res ["id"].Value<int> (), sessionId = res ["sessionId"]?.Value<string> () }, res ["method"].Value<string> (), res ["params"] as JObject, token));
 			}
@@ -261,10 +270,12 @@ namespace WebAssembly.Net.Debugging {
 				method,
 				@params = args
 			});
+			//Console.WriteLine ($"** SendCommandInternal: o: {o.ToString ()}");
 			var tcs = new TaskCompletionSource<Result> ();
 
 			var msgId = new MessageId { id = id, sessionId = sessionId.sessionId };
 			//Log ("verbose", $"add cmd id {sessionId}-{id}");
+			//Console.WriteLine ($"add cmd id {sessionId}-{id}");
 			pending_cmds.Add ((msgId , tcs));
 
 			Send (this.browser, o, token);
@@ -299,6 +310,7 @@ namespace WebAssembly.Net.Debugging {
 			if (result.IsErr)
 				logger.LogError ("sending error response {result}", result);
 
+			//Console.WriteLine ($"** DevtoolProxy SendResponseInternal: {o.ToString ()}");
 			Send (this.ide, o, token);
 		}
 

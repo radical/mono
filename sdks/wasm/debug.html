@@ -8,6 +8,7 @@
 		 <textarea rows="10" cols="100" id="output"></textarea>
 	  <br>
 		  <button type="button" onclick="App.onClick()" id="button" disabled="true">SendEvent</button>
+		  <button type="button" onclick="App.gen_struct()" id="gen_button" disabled="true">SendEvent</button>
 	  <br>
 	
       <script type="text/javascript" src="mono-config.js"></script>
@@ -15,16 +16,26 @@
 		var App = {
 			onClick: function () {
 				this.output.value = "...";
-				var res = this.int_add (10, 20);
+				<!--var res = this.int_add (10, 20);-->
+				var rest = this.method_with_structs ();
 				this.output.value = "res is " + res;
+			},
+			gen_struct: function () {
+				this.output.value = "...";
+				this.gen_struct ();
+				this.output.value = "back";
 			},
 
 			init: function () {
 				this.int_add = Module.mono_bind_static_method ("[sample] Math:IntAdd");
+				this.method_with_structs = Module.mono_bind_static_method ("[sample] Math:MethodWithStructs");
+				this.gen_struct = Module.mono_bind_static_method ("[sample] Math:MethodWithGenericStruct");
 				this.output = document.getElementById ("output");
 				this.button = document.getElementById ("button");
+				this.gen_button = document.getElementById ("gen_button");
 
 				this.button.disabled = false;
+				this.gen_button.disabled = false;
 				console.log ("ready");
 			},
 		};

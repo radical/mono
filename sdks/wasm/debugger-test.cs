@@ -94,8 +94,9 @@ public class Math { //Only append content to this class as the test suite depend
 		public int InnerMethod (int i)
 		{
 			int j = i + 10;
+			SimpleStructProperty = new SimpleStruct ("set in InnerMethod");
 			string foo_str = "foo";
-			Console.WriteLine ($"i: {i} and j: {j}, foo_str: {foo_str}");
+			Console.WriteLine ($"i: {i} and j: {j}, foo_str: {foo_str} ");
 			j += 9;
 			Console.WriteLine ($"i: {i} and j: {j}");
 			return j;
@@ -115,11 +116,11 @@ public class Math { //Only append content to this class as the test suite depend
 		{
 			var ss = new SimpleStruct ();
 			var ss_arr = new SimpleStruct [] {};
-			ss.gs.StringField = "field in GenericStruct";
+			//ss.gs.StringField = "field in GenericStruct";
 
-			Console.WriteLine ($"Using the struct: {ss.dt}, {ss.gs.StringField}, ss_arr: {ss_arr.Length}");
+			//Console.WriteLine ($"Using the struct: {ss.dt}, {ss.gs.StringField}, ss_arr: {ss_arr.Length}");
 			string str = "AsyncMethodNoReturn's local";
-			Console.WriteLine ($"* field m: {m}");
+			//Console.WriteLine ($"* field m: {m}");
 			await System.Threading.Tasks.Task.Delay (1);
 			Console.WriteLine ($"str: {str}");
 		}
@@ -131,26 +132,70 @@ public class Math { //Only append content to this class as the test suite depend
 
 		public static void MethodWithStructs ()
 		{
-			var ss = new SimpleStruct ();
-			ss.gs.StringField = "field in GenericStruct";
-
-			var ss_arr = new SimpleStruct [] {};
+			var ss_local = new SimpleStruct ("set in MethodWithStructs");
+			var ss_arr = new SimpleStruct [] { ss_local };
+			ss_arr [0].num = 12345;
 			var gs = new GenericStruct<Math> ();
-			Math m = new Math ();
-			Console.WriteLine ($"Using the struct: {ss.dt}, {ss.gs.StringField}, ss_arr: {ss_arr.Length}, gs: {gs.StringField}");
+			Math m_local = new Math { StringField = "value set in MethodWithStructs", StructFieldInMathClass = new AnotherStruct { Name = "Set on math.StructFieldInMathClass in MethodWithStructs", RGB = RGB.Blue, Options = Options.Option3 } };
+			Console.WriteLine ($"Using the struct: {ss_local.gs.StringField}, ss_arr: {ss_arr.Length}, gs: {gs.StringField}, m: {m_local}");
 		}
+
+		public SimpleStruct SimpleStructProperty { get; set; }
 	}
+
+	public AnotherStruct StructFieldInMathClass;
+	public string StringField;
 
 	struct SimpleStruct
 	{
+		public uint num;
+		public string str_member;
 		public DateTime dt;
 		public GenericStruct<DateTime> gs;
+		public Math m;
+		public AnotherStruct another_struct;
+
+		public SimpleStruct (string str)
+		{
+			str_member = "SimpleStruct..ctor got str: " + str;
+			num = 0xDDEEFFA; //BBCC3377;
+			dt = new DateTime (2020, 1, 2, 3, 5, 6);
+			gs = new GenericStruct<DateTime> { StringField = "StringField member of a GenericStruct", List = new System.Collections.Generic.List<DateTime> { DateTime.Now } };
+			m = new Math ();
+			another_struct = new AnotherStruct { BoolField = false, Name = "Name for AnotherStruct set in SimpleStruct..ctor", RGB = RGB.Green, Options = Options.Option2 };
+		}
 	}
 
-	struct GenericStruct<T>
+	public struct GenericStruct<T>
 	{
 		public System.Collections.Generic.List<T> List;
 		public string StringField;
+	}
+
+	public struct AnotherStruct
+	{
+		public bool BoolField;
+		public string Name;
+		public RGB RGB;
+		public Options Options;
+	}
+
+	public enum RGB
+	{
+		Red,
+		Green,
+		Blue
+	}
+
+	[Flags]
+	public enum Options
+	{
+		None = 0,
+		Option1 = 1,
+		Option2 = 2,
+		Option3 = 4,
+
+		Default = Option1 | Option3
 	}
 
 }

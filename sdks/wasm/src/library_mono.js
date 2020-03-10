@@ -4,6 +4,7 @@ var MonoSupportLib = {
 	$MONO: {
 		pump_count: 0,
 		timeout_queue: [],
+		_vt_stack: [],
 		mono_wasm_runtime_is_ready : false,
 		mono_wasm_ignore_pdb_load_errors: true,
 		pump_message: function () {
@@ -42,6 +43,41 @@ var MonoSupportLib = {
 			};
 		},
 
+		merge_name_vals: function (var_list) {
+			var out_list = [];
+
+			//console.log ('merge_name_vals got ' + JSON.stringify (var_list, undefined, 4));
+			var i;
+			for (i = 0; i < var_list.length;) {
+				var o = var_list [i];
+				var name = o.name;
+				if (name == null || name == undefined) {
+					i ++;
+					out_list.push (o);
+					continue;
+				}
+
+				if (i + 1 < var_list.length) {
+					var value = var_list [i+1].value;
+
+					if (value != null && value != undefined) {
+						var descr = value.description;
+						if (descr == null || descr == undefined)
+							value.description = '' + value.value;
+
+						o.value = value;
+					}
+				}
+				
+				out_list.push (o);
+				i += 2;
+			}
+
+			//console.log('changed to ' + JSON.stringify (out_list, undefined, 4));
+			
+			return out_list;
+		},
+
 		mono_wasm_get_variables: function(scope, var_list) {
 			if (!this.mono_wasm_get_var_info)
 				this.mono_wasm_get_var_info = Module.cwrap ("mono_wasm_get_var_info", null, [ 'number', 'number', 'number']);
@@ -56,22 +92,42 @@ var MonoSupportLib = {
 			this.mono_wasm_get_var_info (scope, heapBytes.byteOffset, var_list.length);
 			Module._free(heapBytes.byteOffset);
 			var res = this.var_info;
+			res = MONO.merge_name_vals (res);
+			//console.log ('mono_wasm_get_variables, var_info: ' + this.var_info);
 			this.var_info = []
+			console.log('mono_wasm_get_variables returning ' + JSON.stringify (res, undefined, 4));
 
 			return res;
 		},
 
-		mono_wasm_get_object_properties: function(objId) {
+		mono_wasm_get_object_properties: function(objId, expandValueTypes) {
 			if (!this.mono_wasm_get_object_properties_info)
 				this.mono_wasm_get_object_properties_info = Module.cwrap ("mono_wasm_get_object_properties", null, [ 'number' ]);
 
 			this.var_info = [];
-			console.log (">> mono_wasm_get_object_properties " + objId);
-			this.mono_wasm_get_object_properties_info (objId);
+			console.log (">> mono_wasm_get_object_properties " + objId + ", expandValueTypes: " + expandValueTypes);
+			this.mono_wasm_get_object_properties_info (objId, expandValueTypes);
+
+			//this.var_info.push (this.var_info.length);
 
 			var res = this.var_info;
+			res = MONO.merge_name_vals (res);
+
+			var i;
+			for (i = 0; i < res.length; i++) {
+				console.log (`mono_wasm_get_object_properties_info (js): looking at ${res[i]}`);
+				if (res [i].value.isValueType == undefined || !res [i].value.isValueType)
+					continue;
+				//if (res [i].value.containedInObject == undefined || !res [i].value.containedInObject)
+					//continue;
+
+				// FIXME: property
+				res [i].value.objectId = `dotnet:valuetype:${objId}:${res [i].fieldOffset}`;
+			}
+
 			this.var_info = [];
 
+			console.log('mono_wasm_get_object_properties_info returning ' + JSON.stringify (res, undefined, 4));
 			return res;
 		},
 
@@ -84,6 +140,7 @@ var MonoSupportLib = {
 			this.mono_wasm_get_array_values_info (objId);
 
 			var res = this.var_info;
+			res = MONO.merge_name_vals (res);
 			this.var_info = [];
 
 			return res;
@@ -290,6 +347,7 @@ var MonoSupportLib = {
 	},
 
 	mono_wasm_add_number_var: function(var_value) {
+		console.log('mono_wasm_add_number_var: value: ' + var_value);
 		MONO.var_info.push({
 			value: {
 				type: "number",
@@ -298,9 +356,13 @@ var MonoSupportLib = {
 		});
 	},
 
-	mono_wasm_add_properties_var: function(name) {
+	mono_wasm_add_properties_var: function(name, field_offset, property_name, own) {
+		console.log('mono_wasm_add_properties_var name: ' + Module.UTF8ToString(name));
 		MONO.var_info.push({
 			name: Module.UTF8ToString (name),
+			isOwn: own,
+			fieldOffset: field_offset,
+			propertyName: property_name
 		});
 	},
 
@@ -312,10 +374,12 @@ var MonoSupportLib = {
 
 	mono_wasm_add_string_var: function(var_value) {
 		if (var_value == 0) {
+			console.log('mono_wasm_add_string_var value: null');
 			MONO.mono_wasm_add_null_var ("string");
 			return;
 		} 
 
+		console.log('mono_wasm_add_string_var value: ' + Module.UTF8ToString(var_value));
 		MONO.var_info.push({
 			value: {
 				type: "string",
@@ -337,6 +401,113 @@ var MonoSupportLib = {
 				className: fixed_class_name,
 				description: fixed_class_name,
 				objectId: "dotnet:object:"+ objectId,
+			}
+		});
+	},
+
+	mono_wasm_begin_value_type_var: function(className) {
+		console.log('------- begin ------');
+		fixed_class_name = MONO._mono_csharp_fixup_class_name(Module.UTF8ToString (className));
+		var vt_obj = {
+			value: {
+				type: "object",
+				className: fixed_class_name,
+				description: fixed_class_name,
+				objectId: "dotnet:valuetype:-99", // FIXME: change -99 to 0 or something
+				isValueType: true,
+				members: []
+			}
+		};
+		if (MONO._vt_stack.length > 0) {
+			var prev_obj = MONO._vt_stack [MONO._vt_stack.length - 1];
+			//console.log('prev obj on the stack: ' + JSON.stringify (prev_obj, undefined, 4));
+			//prev_obj
+		} else {
+			//console.log(' -- Initing stack, original var_info: ' + JSON.stringify (MONO.var_info, undefined, 4));
+			MONO._var_info_tmp_ref = MONO.var_info;
+		}
+		MONO.var_info = vt_obj.value.members;
+		MONO._vt_stack.push (vt_obj);
+
+		//console.log('stack: ' + JSON.stringify(MONO._vt_stack, undefined, 4));
+		//console.log('\tvt_obj: ' + JSON.stringify(vt_obj, undefined, 4));
+		//console.log('\tvar_info: ' + JSON.stringify(MONO.var_info, undefined, 4));
+	},
+
+	mono_wasm_end_value_type_var: function(className, objectId) {
+		console.log('------- mono_wasm_end_value_type_var ---------');
+		//console.log('stack: ' + JSON.stringify(MONO._vt_stack, undefined, 4));
+		//console.log('\tcurrent var_info: ' + JSON.stringify(MONO.var_info, undefined, 4));
+
+		// assert length
+		var top_vt_obj_popped = MONO._vt_stack.pop ();
+		top_vt_obj_popped.value.members = MONO.merge_name_vals (top_vt_obj_popped.value.members);
+		//console.log('\ttop_vt_obj_popped: ' + JSON.stringify(top_vt_obj_popped, undefined, 4));
+
+		if (MONO._vt_stack.length == 0) {
+			//console.log('stack done, popped the last vt.');
+			MONO.var_info = MONO._var_info_tmp_ref;
+			//console.log('-- Original var_info: ' + JSON.stringify(MONO.var_info, undefined, 4));
+
+			fixed_class_name = MONO._mono_csharp_fixup_class_name(Module.UTF8ToString (className));
+			//FIXME: um.. we create an object in `_add_` also..
+			MONO.var_info.push({
+				value: {
+					type: "object",
+					className: fixed_class_name,
+					description: fixed_class_name,
+					//FIXME: hm.. make this a "dotnet:vt:obj.. with the container's objectid .. in MonoProxy?
+					objectId: "dotnet:valuetype:-99",
+					isValueType: true,
+					members: top_vt_obj_popped.value.members
+				}
+			});
+		} else {
+			var top_obj = MONO._vt_stack [MONO._vt_stack.length - 1];
+			//console.log('still have on the stack: ' + JSON.stringify(top_obj, undefined, 4));
+			top_obj.value.members.push (top_vt_obj_popped);
+			MONO.var_info = top_obj.value.members;
+			//console.log('.. and .var_info is now: ' + JSON.stringify(MONO.var_info, undefined, 4));
+		}
+	},
+
+	mono_wasm_add_value_type_var: function (className) {
+		fixed_class_name = MONO._mono_csharp_fixup_class_name(Module.UTF8ToString (className));
+		//FIXME: um.. we create an object in `_add_` also..
+		MONO.var_info.push({
+			value: {
+				type: "object",
+				className: fixed_class_name,
+				description: fixed_class_name,
+				//FIXME: hm.. make this a "dotnet:vt:obj.. with the container's objectid .. in MonoProxy?
+				objectId: "dotnet:valuetype:use_offset_or_name_from_earlier",
+				isValueType: true,
+				containedInObject: true
+			}
+		});
+	},
+
+	mono_wasm_add_enum_var: function(className, members, value) {
+		// FIXME: flags
+		//
+
+		// group0: Monday:0
+		// group1: Monday
+		// group2: 0
+		var re = new RegExp (`[,]?([^,:]+):(${value}(?=,)|${value}$)`, 'g')
+		var members_str = Module.UTF8ToString (members);
+
+		var match = re.exec(members_str);
+		var member_name = match == null ? ('' + value) : match [1];
+
+		fixed_class_name = MONO._mono_csharp_fixup_class_name(Module.UTF8ToString (className));
+		MONO.var_info.push({
+			value: {
+				type: "object",
+				//enum_members: Module.UTF8ToString (members),
+				className: fixed_class_name,
+				description: member_name,
+				isEnum: true
 			}
 		});
 	},
