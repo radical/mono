@@ -1,5 +1,7 @@
+#define OBJ_RES
 using System;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 
@@ -157,10 +159,12 @@ namespace WebAssembly.Net.Debugging {
 			case "Debugger.setBreakpointByUrl": {
 					var resp = await SendCommand (id, method, args, token);
 					if (!resp.IsOk) {
+						System.Console.WriteLine($"-- setBreakpointByUrl returned {resp}");
 						SendResponse (id, resp, token);
 						return true;
 					}
 
+					System.Console.WriteLine($"-- setBreakpointByUrl return OK ({resp}), let's try to set it.. treating it like a dotnet one");
 					var bpid = resp.Value["breakpointId"]?.ToString ();
 					var request = BreakpointRequest.Parse (bpid, args);
 					context.BreakpointRequests[bpid] = request;
@@ -186,8 +190,7 @@ namespace WebAssembly.Net.Debugging {
 
 			case "Debugger.stepInto": {
 					return await Step (id, StepKind.Into, token);
-				}
-
+				} 
 			case "Debugger.stepOut": {
 					return await Step (id, StepKind.Out, token);
 				}
@@ -219,34 +222,74 @@ namespace WebAssembly.Net.Debugging {
 						var parts = objId.Split (new char [] { ':' });
 						if (parts.Length < 3)
 							return true;
-						switch (parts[1]) {
-						case "scope": {
-							await GetScopeProperties (id, int.Parse (parts[2]), token);
-							break;
-							}
-						case "object": {
-							await GetDetails (id, MonoCommands.GetObjectProperties (int.Parse (parts[2]), expandValueTypes: false), token);
-							break;
-							}
-						case "array": {
-							await GetArrayDetails (id, objId, parts, token);
-							break;
-							}
-						case "valuetype": {
-							await GetDetailsForValueType (id, objId,
-									get_props_cmd_fn: () => {
-										if (parts.Length < 4)
-											return null;
+						var result = await RuntimeGetProperties (id, objId, parts, args, token);
+						Console.WriteLine ($"-- getProperties, id: {id}, args: {args}, responded with {result}");
+						if (objId.StartsWith ("dotnet:cfo_res:")) {
+							var real_value_own_str = result.Value ["result"]?["__real_value_own__"]?.Value<string> ();
+							bool accessorPropertiesOnly = args? ["accessorPropertiesOnly"]?.Value<bool> () ?? false;
+							bool ownProperties = args? ["ownProperties"]?.Value<bool> () ?? false;
 
-										var containerObjId = int.Parse (parts[2]);
-										return MonoCommands.GetObjectProperties (containerObjId, expandValueTypes: true);
-									}, token);
-							break;
+							// var real_value_to_use = ownProperties ? real_value_own_str : real_value_str;
+
+							// FIXME: umm.. if both are false, then return the combined result?
+							// FIXME: move this stuff to js, and return only the relevant stuff
+							//        accessOnly   ownOnly
+							//            Y          Y         BAD?
+							//            Y          N         only access
+							//            N .        Y         only own
+							//            N          N         both
+							if (ownProperties) {
+								Console.WriteLine ($"real_value_to_use (ownProperties: {ownProperties}): {real_value_own_str}");
+								var value_obj = JArray.Parse (real_value_own_str.Replace (@"\""", "\""));
+								result = Result.OkFromObject (new { result = value_obj });
+							} else if (accessorPropertiesOnly) {
+								result = Result.OkFromObject (new {
+									result = JArray.Parse (result.Value ["result"]?["__real_val_accessors__"]?.Value<string> ())
+								});
+							} else {
+								if (ownProperties || accessorPropertiesOnly)
+									throw new ArgumentException ("Um both ownProperties and accessorPropertiesOnly shouldn't be true, right?");
+
+								var ownPropsObj = JArray.Parse (real_value_own_str.Replace (@"\""", "\""));
+								var accessorPropsObj = JArray.Parse (result.Value ["result"]?["__real_val_accessors__"]?.Value<string> ());
+								ownPropsObj.Merge (accessorPropsObj, new JsonMergeSettings { MergeArrayHandling = MergeArrayHandling.Concat });
+
+								result = Result.OkFromObject (new {
+									result = ownPropsObj
+								});
 							}
+
+							// if (accessorPropertiesOnly) {
+							// 	result = Result.OkFromObject (new {
+							// 		result = JArray.Parse (result.Value ["result"]?["__real_val_accessors__"]?.Value<string> ())
+							// 	});
+							// } else if (ownProperties && !String.IsNullOrEmpty (real_value_own_str)) {
+							// 	Console.WriteLine ($"real_value_to_use (ownProperties: {ownProperties}): {real_value_own_str}");
+							// 	var value_obj = JArray.Parse (real_value_own_str.Replace (@"\""", "\""));
+							// 	result = Result.OkFromObject (new { result = value_obj });
+							// } else {
+							// 	result = Result.OkFromObject (new { });
+							// }
+							Console.WriteLine ($"\tbut this is a cfo_res, so returning the final {result} from MonoProxy");
 						}
-
+						Console.WriteLine ($"-- Sending response for getProperties request for id {id}");
+						SendResponse (id, result, token);
+						Console.WriteLine ($"-- And .. back from SendResponse");
 						return true;
 					}
+					break;
+				}
+
+			case "Runtime.releaseObject": {
+					var objId = args ["objectId"]?.Value<string> ();
+					if (objId?.StartsWith ("dotnet:cfo_res:", StringComparison.Ordinal) == true) {
+						await SendMonoCommand (id, new MonoCommands ($"MONO.mono_wasm_release_object('{objId}')"), token);
+
+						System.Console.WriteLine("- Sending response for releaseObject");
+						SendResponse (id, Result.OkFromObject (new{}), token);
+						return true;
+					}
+
 					break;
 				}
 
@@ -311,32 +354,44 @@ namespace WebAssembly.Net.Debugging {
 
 				return true;
 			}
+			case "Runtime.callFunctionOn": {
+					var targetObjId = args ["objectId"].Value<string> ();
+					if (!targetObjId.StartsWith ("dotnet:", StringComparison.Ordinal))
+						return false;
+
+					//Console.WriteLine ($"\n\n--------------- callFunctionOn ----------- \n\n");
+					var returnByValue = args ["returnByValue"] != null ? args ["returnByValue"].Value<bool> () : false;
+					var cmd = new MonoCommands ($"MONO.mono_wasm_call_function_on ({args.ToString ()}, {(returnByValue ? "true" : "false")})");
+					//Console.WriteLine ($"**** Runtime.callFunctionOn sending mono command\n{cmd.expression}, returnByVal: {cmd.returnByValue}");
+
+					var res = await SendMonoCommand (id, cmd, token);
+					//Console.WriteLine ($"\twhich returned {res}");
+					if (!returnByValue && res.Value?["result"]?["value"]?["objectId"]?.Value<string> ()?.StartsWith ("dotnet:cfo_res:") == true)
+						res = Result.OkFromObject (new { result = res.Value ["result"] ["value"].Value<JObject> () });
+
+					SendResponse (id, res, token);
+					//Console.WriteLine ($"-- ok, returning from AcceptCommand");
+					return true;
+				}
 			}
 
 			return false;
 		}
 
-		async Task GetArrayDetails (MessageId id, string objId, string[] objIdParts, CancellationToken token)
+		async Task<Result> RuntimeGetProperties (MessageId id, string objId, string[] objIdParts, JToken args, CancellationToken token)
 		{
-			switch (objIdParts.Length)
-			{
-				case 3: {
-					await GetDetails (id, MonoCommands.GetArrayValues (int.Parse (objIdParts [2])), token);
-					break;
-					}
-				case 4: {
-					// This form of the id is being used only for valuetypes right now
-					await GetDetailsForValueType(id, objId,
-							get_props_cmd_fn: () => {
-								var arrayObjectId = int.Parse (objIdParts [2]);
-								var idx = int.Parse (objIdParts [3]);
-								return MonoCommands.GetArrayValueExpanded (arrayObjectId, idx);
-							}, token);
-					break;
-					}
-				default:
-					SendResponse (id, Result.Exception (new ArgumentException ($"Unknown objectId format for array: {objId}")), token);
-					break;
+			switch (objIdParts[1]) {
+			case "scope": {
+				return await GetScopeProperties (id, int.Parse (objIdParts [2]), token);
+				}
+			default: {
+					var res = await SendMonoCommand (id, new MonoCommands ($"MONO.mono_wasm_get_details ('{objId}', {args})"), token);
+					// Console.WriteLine ($"-- MP.RuntimeGetProperties: get_details returned from js: {res}");
+
+					return res.IsOk
+							? Result.Ok (JObject.FromObject (new { result = res.Value ["result"] ["value"] }))
+							: res;
+				}
 			}
 		}
 
@@ -507,37 +562,6 @@ namespace WebAssembly.Net.Debugging {
 			return true;
 		}
 
-		async Task GetDetails(MessageId msg_id, MonoCommands cmd, CancellationToken token, bool send_response = true)
-		{
-			var res = await SendMonoCommand(msg_id, cmd, token);
-
-			//if we fail we just buble that to the IDE (and let it panic over it)
-			if (res.IsErr) {
-				SendResponse(msg_id, res, token);
-				return;
-			}
-
-			try {
-				var var_list = res.Value?["result"]?["value"]?.Values<JObject>().ToArray() ?? Array.Empty<JObject>();
-				if (var_list.Length > 0)
-					ExtractAndCacheValueTypes (GetContext (msg_id), var_list);
-
-				if (!send_response)
-					return;
-
-				var response = JObject.FromObject(new
-				{
-					result = var_list
-				});
-
-				SendResponse(msg_id, Result.Ok(response), token);
-			} catch (Exception e) when (send_response) {
-				Log ("verbose", $"failed to parse {res.Value} - {e.Message}");
-				SendResponse(msg_id, Result.Exception(e), token);
-			}
-
-		}
-
 		internal bool TryFindVariableValueInCache(ExecutionContext ctx, string expression, bool only_search_on_this, out JToken obj)
 		{
 			if (ctx.LocalsCache.TryGetValue (expression, out obj)) {
@@ -624,37 +648,29 @@ namespace WebAssembly.Net.Debugging {
 			}
 		}
 
-		async Task GetScopeProperties (MessageId msg_id, int scope_id, CancellationToken token)
+		async Task<Result> GetScopeProperties (MessageId msg_id, int scope_id, CancellationToken token)
 		{
-
 			try {
 				var ctx = GetContext (msg_id);
 				var scope = ctx.CallStack.FirstOrDefault (s => s.Id == scope_id);
-				if (scope == null) {
-					SendResponse (msg_id,
-							Result.Err (JObject.FromObject (new { message = $"Could not find scope with id #{scope_id}" })),
-							token);
-					return;
-				}
+				if (scope == null)
+					return Result.Err (JObject.FromObject (new { message = $"Could not find scope with id #{scope_id}" }));
+
 				var vars = scope.Method.GetLiveVarsAt (scope.Location.CliLocation.Offset);
 
 				var var_ids = vars.Select (v => v.Index).ToArray ();
 				var res = await SendMonoCommand (msg_id, MonoCommands.GetScopeVariables (scope.Id, var_ids), token);
 
 				//if we fail we just buble that to the IDE (and let it panic over it)
-				if (res.IsErr) {
-					SendResponse (msg_id, res, token);
-					return;
-				}
+				if (res.IsErr)
+					return res;
 
 				var values = res.Value? ["result"]? ["value"]?.Values<JObject> ().ToArray ();
 
-				if(values == null) {
-					SendResponse (msg_id, Result.OkFromObject (new {result = Array.Empty<object> ()}), token);
-					return;
-				}
+				if(values == null)
+					return Result.OkFromObject (new { result = Array.Empty<object> () });
 
-				ExtractAndCacheValueTypes (ctx, values);
+				// ExtractAndCacheValueTypes (ctx, values);
 
 				var var_list = new List<object> ();
 				int i = 0;
@@ -667,72 +683,10 @@ namespace WebAssembly.Net.Debugging {
 					var_list.Add (values [i]);
 				}
 
-				SendResponse (msg_id, Result.OkFromObject (new { result = var_list }), token);
+				return Result.OkFromObject (new { result = var_list });
 			} catch (Exception exception) {
 				Log ("verbose", $"Error resolving scope properties {exception.Message}");
-				SendResponse (msg_id, Result.Exception (exception), token);
-			}
-		}
-
-		IEnumerable<JObject> ExtractAndCacheValueTypes (ExecutionContext ctx, IEnumerable<JObject> var_list)
-		{
-			foreach (var jo in var_list) {
-				var value = jo["value"]?.Value<JObject> ();
-				if (value ["type"]?.Value<string> () != "object")
-					continue;
-
-				if (!(value ["isValueType"]?.Value<bool> () ?? false) || // not a valuetype
-					!(value ["expanded"]?.Value<bool> () ?? false))  // not expanded
-					continue;
-
-				// Expanded ValueType
-				var members = value ["members"]?.Values<JObject>().ToArray() ?? Array.Empty<JObject>();
-				var objectId = value ["objectId"]?.Value<string> () ?? $"dotnet:valuetype:{ctx.NextValueTypeId ()}";
-
-				value ["objectId"] = objectId;
-
-				ExtractAndCacheValueTypes (ctx, members);
-
-				ctx.ValueTypesCache [objectId] = JArray.FromObject (members);
-				value.Remove ("members");
-			}
-
-			return var_list;
-		}
-
-		async Task<bool> GetDetailsForValueType (MessageId msg_id, string object_id, Func<MonoCommands> get_props_cmd_fn, CancellationToken token)
-		{
-			var ctx = GetContext (msg_id);
-
-			if (!ctx.ValueTypesCache.ContainsKey (object_id)) {
-				var cmd = get_props_cmd_fn ();
-				if (cmd == null) {
-					SendResponse (msg_id, Result.Exception (new ArgumentException (
-									"Could not find a cached value for {object_id}, and cant' expand it.")),
-									token);
-
-					return false;
-				} else {
-					await GetDetails (msg_id, cmd, token, send_response: false);
-				}
-			}
-
-			if (ctx.ValueTypesCache.TryGetValue (object_id, out var var_list)) {
-				var response = JObject.FromObject(new
-				{
-					result = var_list
-				});
-
-				SendResponse(msg_id, Result.Ok(response), token);
-				return true;
-			} else {
-				var response = JObject.FromObject(new
-				{
-					result = $"Unable to get details for {object_id}"
-				});
-
-				SendResponse(msg_id, Result.Err(response), token);
-				return false;
+				return Result.Exception (exception);
 			}
 		}
 

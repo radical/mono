@@ -20,6 +20,78 @@ public class Math {
 	public int First (int[] x) {
 		return x.FirstOrDefault ();
 	}
+
+
+	public static unsafe void TestPointers ()
+	{
+		// var ss = new string[] { "q", "dfg" };
+		// int ivalue0 = 5;
+		// int ivalue1 = 10;
+
+		// int* ip = &ivalue0;
+		// int** ipp = &ip;
+		// int*[] ipa = new int*[] { &ivalue0, &ivalue1, null };
+
+		int[] big = new int[200];
+		for (int i = 0; i < big.Length; i ++)
+			big[i] = i;
+
+		// DateTime[] big_dt = new DateTime[500];
+
+		// int[][] big_nested = new int[500][];
+		// for (int i = 0; i < 500; i ++) {
+		// 	big_nested[i] = new int[(i * 10) % 200];
+		// 	for (int j = 0; j < big_nested[i].Length; j++)
+		// 		big_nested[i][j] = i + j;
+		// }
+
+
+		// char cvalue0 = 'q';
+		// char* cp = &cvalue0;
+
+		// DateTime dt = new DateTime(5, 6, 7, 8, 9, 10);
+		// void* vp = &dt;
+		// DateTime* dtp = &dt;
+
+		// var gs = new GenericStructWithUnmanagedT<DateTime> { Value = new DateTime (1, 2, 3, 4, 5, 6), IntField = 4 };
+		// GenericStructWithUnmanagedT<DateTime>* gsp = &gs;
+
+		// Console.WriteLine ($"{(int)*ip}, {(int)**ipp}, {ipa}, {(char)*cp}, {(vp == null ? "null" : "not null")}, {dtp->Second}, {gsp->IntField}");
+
+		// string s = "hello";
+		// GenericStructWithUnmanagedT<DateTime> genericStruct = new GenericStructWithUnmanagedT<DateTime> { Value = new DateTime(1, 3, 5, 7, 9, 11), IntField = 99 };
+
+		// TestRef<DateTime>(ref s, ref gs, out var local_m);
+		// Console.WriteLine($"{s}, {genericStruct}, {local_m}");
+		// Console.WriteLine($"{*cp}, {(int)*ip}, {(int)**ipp} {ipa}, {ss}");
+		// Console.WriteLine ($"{gsp->IntField}");
+        // Console.WriteLine ($"{big_nested[0][0]}");
+		Console.WriteLine ($"{big[40]}");
+		// Console.WriteLine($"{(int)*ip}");
+		// Console.WriteLine ($"{(int)*ipa[0]}");
+        // Console.WriteLine ($"-- {ss[1]}");
+        // Console.WriteLine ($"-- {ss[0]}");
+        // Console.WriteLine ($"{big_dt[0]}");
+        System.Console.WriteLine("foo");
+	}
+
+    //FIXME: pointers are method params, return type
+
+    public unsafe static void TestRef<T> (ref string s, ref GenericStructWithUnmanagedT<T> genericStruct, out Math m)
+        where T: unmanaged
+    {
+		Console.WriteLine($"s: {s}, gs: {genericStruct}");
+		m = new Math() { StringField = "from TestRef" };
+		genericStruct.IntField += 10;
+	}
+
+	public string StringField;
+
+	public struct GenericStructWithUnmanagedT<T> where T: unmanaged
+	{
+		public T Value;
+		public int IntField;
+	}
 }
 
 namespace GeoLocation

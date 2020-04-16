@@ -93,7 +93,7 @@ namespace WebAssembly.Net.Debugging {
 			=> new Result (null, JObject.FromObject (new { message = msg }));
 
 		public static Result Exception (Exception e)
-			=> new Result (null, JObject.FromObject (new { message = e.Message }));
+			=> new Result (null, JObject.FromObject (new { message = e.ToString () }));
 
 		public JObject ToJObject (MessageId target) {
 			if (IsOk) {
@@ -232,9 +232,9 @@ namespace WebAssembly.Net.Debugging {
 		internal DebugStore store;
 		public TaskCompletionSource<DebugStore> Source { get; } = new TaskCompletionSource<DebugStore> ();
 
-		int nextValueTypeId = 0;
-		public Dictionary<string, JToken> ValueTypesCache = new Dictionary<string, JToken> ();
 		public Dictionary<string, JToken> LocalsCache = new Dictionary<string, JToken> ();
+		// int nextValueTypeId = 0;
+		// public Dictionary<string, JToken> ValueTypesCache = new Dictionary<string, JToken> ();
 
 		public DebugStore Store {
 			get {
@@ -248,12 +248,12 @@ namespace WebAssembly.Net.Debugging {
 		public void ClearState ()
 		{
 			CallStack = null;
-			ValueTypesCache.Clear ();
 			LocalsCache.Clear ();
-			nextValueTypeId = 0;
+			// ValueTypesCache.Clear ();
+			// nextValueTypeId = 0;
 		}
 
-		public int NextValueTypeId () => Interlocked.Increment (ref nextValueTypeId);
+		// public int NextValueTypeId () => Interlocked.Increment (ref nextValueTypeId);
 
 	}
 }

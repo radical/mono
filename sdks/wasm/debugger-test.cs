@@ -295,6 +295,76 @@ public partial class Math { //Only append content to this class as the test suit
 		Console.WriteLine ($"-- break here");
 	}
 
+	public static void BigArrayTest ()
+	{
+		// var ss = new string[] { "q", "dfg" };
+		// int ivalue0 = 5;
+		// int ivalue1 = 10;
+
+		// int* ip = &ivalue0;
+		// int** ipp = &ip;
+		// int*[] ipa = new int*[] { &ivalue0, &ivalue1, null };
+
+		int[] big = new int[200];
+		for (int i = 0; i < big.Length; i ++)
+			big[i] = i;
+
+		// DateTime[] big_dt = new DateTime[500];
+
+		// int[][] big_nested = new int[500][];
+		// for (int i = 0; i < 500; i ++) {
+		// 	big_nested[i] = new int[(i * 10) % 200];
+		// 	for (int j = 0; j < big_nested[i].Length; j++)
+		// 		big_nested[i][j] = i + j;
+		// }
+
+
+		// char cvalue0 = 'q';
+		// char* cp = &cvalue0;
+
+		// DateTime dt = new DateTime(5, 6, 7, 8, 9, 10);
+		// void* vp = &dt;
+		// DateTime* dtp = &dt;
+
+		// var gs = new GenericStructWithUnmanagedT<DateTime> { Value = new DateTime (1, 2, 3, 4, 5, 6), IntField = 4 };
+		// GenericStructWithUnmanagedT<DateTime>* gsp = &gs;
+
+		// Console.WriteLine ($"{(int)*ip}, {(int)**ipp}, {ipa}, {(char)*cp}, {(vp == null ? "null" : "not null")}, {dtp->Second}, {gsp->IntField}");
+
+		// string s = "hello";
+		// GenericStructWithUnmanagedT<DateTime> genericStruct = new GenericStructWithUnmanagedT<DateTime> { Value = new DateTime(1, 3, 5, 7, 9, 11), IntField = 99 };
+
+		// TestRef<DateTime>(ref s, ref gs, out var local_m);
+		// Console.WriteLine($"{s}, {genericStruct}, {local_m}");
+		// Console.WriteLine($"{*cp}, {(int)*ip}, {(int)**ipp} {ipa}, {ss}");
+		// Console.WriteLine ($"{gsp->IntField}");
+        // Console.WriteLine ($"{big_nested[0][0]}");
+		// Console.WriteLine($"{(int)*ip}");
+		// Console.WriteLine ($"{(int)*ipa[0]}");
+        // Console.WriteLine ($"-- {ss[1]}");
+        // Console.WriteLine ($"-- {ss[0]}");
+        // Console.WriteLine ($"{big_dt[0]}");
+		Console.WriteLine ($"{big[40]}");
+        System.Console.WriteLine("foo");
+	}
+
+	public static void CallFunctionOnTest (int len)
+	{
+		var big = new int[len];
+		for (int i = 0; i < len; i ++)
+			big [i] = i + 1000;
+
+		var simple_struct = new SimpleStruct () { dt = new DateTime (2020, 1, 2, 3, 4, 5), gs = new GenericStruct<DateTime> { StringField = $"simple_struct # gs # StringField" } };
+
+		var ss_arr = new SimpleStruct [len];
+		for (int i = 0; i < len; i ++)
+			ss_arr [i] = new SimpleStruct () { dt = new DateTime (2020+i, 1, 2, 3, 4, 5), gs = new GenericStruct<DateTime> { StringField = $"ss_arr # {i} # gs # StringField" } };
+
+		var nim = new NestedInMath { SimpleStructProperty = new SimpleStruct () { dt = new DateTime (2010, 6, 7, 8, 9, 10) } };
+		Action<GenericStruct<int[]>> action = DelegateTargetWithVoidReturn;
+		Console.WriteLine("foo");
+	}
+
 	struct SimpleStruct
 	{
 		public DateTime dt;
@@ -308,6 +378,12 @@ public partial class Math { //Only append content to this class as the test suit
 
 		public static GenericStruct<bool[]> DelegateTargetForSignatureTest (Math m, GenericStruct<GenericStruct<T[]>> gs)
 			=> new GenericStruct<bool[]> ();
+	}
+
+	public struct GenericStructWithUnmanagedT<T> where T: unmanaged
+	{
+		public T Value;
+		public int IntField;
 	}
 
 }

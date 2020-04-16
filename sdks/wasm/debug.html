@@ -14,13 +14,23 @@
       <script type='text/javascript'>
 		var App = {
 			onClick: function () {
+				var ss = ['a', 'b'];
+
+				var a = new Array(10000);
+				for (let i=0; i < 10000; i ++) {
+					a[i]=i;
+				}
+
+				console.log(ss);
 				this.output.value = "...";
-				var res = this.int_add (10, 20);
+				//var res = this.int_add (true);
+				var res = this.run ();
 				this.output.value = "res is " + res;
 			},
 
 			init: function () {
-				this.int_add = Module.mono_bind_static_method ("[sample] DebuggerTests.ValueTypesTest:MethodWithLocalStructs");
+				this.int_add = Module.mono_bind_static_method ("[sample] DebuggerTests.ArrayTestsClass:PrimitiveTypeLocals");
+				this.run = Module.mono_bind_static_method ("[sample] DebuggerTests.EntryClass:run");
 				this.output = document.getElementById ("output");
 				this.button = document.getElementById ("button");
 

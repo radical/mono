@@ -19,10 +19,14 @@ namespace WebAssembly.Net.Debugging {
 
 		public WebSocket Ws { get; private set; }
 		public Task CurrentSend { get { return current_send; } }
+
+		static int next_id = 0;
+		public int id = 0;
 		public DevToolsQueue (WebSocket sock)
 		{
 			this.Ws = sock;
 			pending = new List<byte []> ();
+			id = Interlocked.Increment (ref next_id);
 		}
 
 		public Task Send (byte [] bytes, CancellationToken token)
@@ -31,7 +35,6 @@ namespace WebAssembly.Net.Debugging {
 			if (pending.Count == 1) {
 				if (current_send != null)
 					throw new Exception ("current_send MUST BE NULL IF THERE'S no pending send");
-				//logger.LogTrace ("sending {0} bytes", bytes.Length);
 				current_send = Ws.SendAsync (new ArraySegment<byte> (bytes), WebSocketMessageType.Text, true, token);
 				return current_send;
 			}
@@ -128,8 +131,9 @@ namespace WebAssembly.Net.Debugging {
 			var queue = GetQueueForSocket (to);
 
 			var task = queue.Send (bytes, token);
-			if (task != null)
+			if (task != null) {
 				pending_ops.Add (task);
+			}
 		}
 
 		async Task OnEvent (SessionId sessionId, string method, JObject args, CancellationToken token)
@@ -144,11 +148,22 @@ namespace WebAssembly.Net.Debugging {
 			}
 		}
 
+		string [] trace_commands = new [] {
+			"Runtime.getProperties",
+			"Runtime.releaseObject",
+			"Runtime.callFunctionOn"
+		};
+
 		async Task OnCommand (MessageId id, string method, JObject args, CancellationToken token)
 		{
 			try {
+				//Console.WriteLine ($"* DVP: OnCommand id: {id} {method} {args}");
 				if (!await AcceptCommand (id, method, args, token)) {
+					if (trace_commands.Contains (method))
+						Console.WriteLine ($"Trace: Passing command on.. id: {id}");
 					var res = await SendCommandInternal (id, method, args, token);
+					if (trace_commands.Contains (method))
+						Console.WriteLine ($"Trace: Response to id: {id} {method}: {res}");
 					SendResponseInternal (id, res, token);
 				}
 			} catch (Exception e) {
@@ -158,7 +173,6 @@ namespace WebAssembly.Net.Debugging {
 
 		void OnResponse (MessageId id, Result result)
 		{
-			//logger.LogTrace ("got id {0} res {1}", id, result);
 			// Fixme
 			if (pending_cmds.Remove (id, out var task)) {
 				task.SetResult (result);
@@ -169,6 +183,8 @@ namespace WebAssembly.Net.Debugging {
 
 		void ProcessBrowserMessage (string msg, CancellationToken token)
 		{
+			if (msg.IndexOf ("Runtime.consoleAPICalled") < 0)
+				Log ("protocol", $"browser: {msg}");
 			var res = JObject.Parse (msg);
 
 			var method = res ["method"]?.ToString ();
@@ -183,7 +199,8 @@ namespace WebAssembly.Net.Debugging {
 
 		void ProcessIdeMessage (string msg, CancellationToken token)
 		{
-			Log ("protocol", $"ide: {msg}");
+			if (msg.IndexOf ("Runtime.consoleAPICalled") < 0)
+				Log ("protocol", $"ide: {msg}");
 			if (!string.IsNullOrEmpty (msg)) {
 				var res = JObject.Parse (msg);
 				pending_ops.Add (OnCommand (
@@ -246,7 +263,7 @@ namespace WebAssembly.Net.Debugging {
 		{
 			JObject o = result.ToJObject (id);
 			if (result.IsErr)
-				logger.LogError ("sending error response {result}", result);
+				logger.LogError ($"sending error response for id: {id} -> {result}");
 
 			Send (this.ide, o, token);
 		}
@@ -274,7 +291,7 @@ namespace WebAssembly.Net.Debugging {
 					try {
 						while (!x.IsCancellationRequested) {
 							var task = await Task.WhenAny (pending_ops.ToArray ());
-							//logger.LogTrace ("pump {0} {1}", task, pending_ops.IndexOf (task));
+							// logger.LogTrace ("pump {0} {1}", task, pending_ops.IndexOf (task));
 							if (task == pending_ops [0]) {
 								var msg = ((Task<string>)task).Result;
 								if (msg != null) {
@@ -320,10 +337,10 @@ namespace WebAssembly.Net.Debugging {
 		{
 			switch (priority) {
 			case "protocol":
-				//logger.LogTrace (msg);
+				//  logger.LogTrace (msg);
 				break;
 			case "verbose":
-				//logger.LogDebug (msg);
+				// logger.LogDebug (msg);
 				break;
 			case "info":
 			case "warning":

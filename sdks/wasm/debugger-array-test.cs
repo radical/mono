@@ -9,7 +9,7 @@ namespace DebuggerTests
 			var int_arr = new int[] { 4, 70, 1 };
 			var int_arr_empty = new int[0];
 			int[] int_arr_null = null;
-
+			
 			if (call_other)
 				OtherMethod ();
 
@@ -122,7 +122,7 @@ namespace DebuggerTests
 			Console.WriteLine ($"Back from PlaceholderMethod, {c.id}");
 		}
 
-		public static async Task<bool> ValueTypeLocalsAsync (bool call_other)
+		public static async Task<bool> ValueTypeLocalsAsync (bool call_other = false)
 		{
 			var gvclass_arr = new SimpleGenericStruct<Point> [] {
 				new SimpleGenericStruct<Point> { Id = "gvclass_arr#1#Id", Color = RGB.Red, Value = new Point { X = 100, Y = 200, Id = "gvclass_arr#1#Value#Id", Color = RGB.Red } },
@@ -157,12 +157,12 @@ namespace DebuggerTests
 		}
 
 		// A workaround for method invocations on structs not working right now
-		public static async Task EntryPointForStructMethod (bool call_other)
+		public static async Task EntryPointForStructMethod (bool call_other = false)
 		{
 			await Point.AsyncMethod (call_other);
 		}
 
-		public static void GenericValueTypeLocals2 (bool call_other)
+		public static void GenericValueTypeLocals2 (bool call_other = false)
 		{
 			var gvclass_arr = new SimpleGenericStruct<Point[]> [] {
 				new SimpleGenericStruct<Point[]> {
@@ -252,5 +252,24 @@ namespace DebuggerTests
 		public string Id { get; set; }
 		public RGB Color { get; set; }
 		public T Value { get; set; }
+	}
+
+	public class EntryClass {
+		public static void run ()
+		{
+			ArrayTestsClass.PrimitiveTypeLocals (true);
+			ArrayTestsClass.ValueTypeLocals (true);
+			ArrayTestsClass.ObjectTypeLocals (true);
+
+			ArrayTestsClass.GenericTypeLocals (true);
+			ArrayTestsClass.GenericValueTypeLocals (true);
+			ArrayTestsClass.GenericValueTypeLocals2 (true);
+
+			ArrayTestsClass.ObjectArrayMembers ();
+
+			ArrayTestsClass.ValueTypeLocalsAsync (true).Wait ();
+
+			ArrayTestsClass.EntryPointForStructMethod (true).Wait ();
+		}
 	}
 }

@@ -37,6 +37,7 @@ EMSCRIPTEN_KEEPALIVE int mono_wasm_setup_single_step (int kind);
 EMSCRIPTEN_KEEPALIVE void mono_wasm_get_object_properties (int object_id, gboolean expand_value_types);
 EMSCRIPTEN_KEEPALIVE void mono_wasm_get_array_values (int object_id);
 EMSCRIPTEN_KEEPALIVE void mono_wasm_get_array_value_expanded (int object_id, int idx);
+EMSCRIPTEN_KEEPALIVE int mono_wasm_get_mono_type (int object_id);
 
 //JS functions imported that we use
 extern void mono_wasm_add_frame (int il_offset, int method_token, const char *assembly_name);
@@ -761,7 +762,8 @@ read_enum_value (const char *mem, int type)
 
 static gboolean describe_value(MonoType * type, gpointer addr, gboolean expandValueType)
 {
-	ERROR_DECL (error);
+	// DEBUG_PRINTF(1, "describe_value: type: %p, 0x%x, addr: %p\n", type, type->type, addr);
+	ERROR_DECL(error);
 	switch (type->type) {
 		case MONO_TYPE_BOOLEAN:
 			mono_wasm_add_typed_value ("bool", NULL, *(gint8*)addr);
@@ -845,7 +847,10 @@ static gboolean describe_value(MonoType * type, gpointer addr, gboolean expandVa
 			int obj_id = get_object_id (obj);
 
 			if (type-> type == MONO_TYPE_ARRAY || type->type == MONO_TYPE_SZARRAY) {
-				mono_wasm_add_typed_value ("array", class_name, obj_id);
+				MonoArray *array = (MonoArray *)obj;
+				EM_ASM ({
+					MONO.mono_wasm_add_typed_value ('array', $0, { objectId: $1, length: $2 });
+				}, class_name, obj_id, mono_array_length_internal (array));
 			} else if (m_class_is_delegate (klass) || (type->type == MONO_TYPE_GENERICINST && m_class_is_delegate (type->data.generic_class->container_class))) {
 				MonoMethod *method;
 
@@ -1188,7 +1193,7 @@ describe_variable (InterpFrame *frame, MonoMethod *method, int pos, gboolean exp
 		addr = mini_get_interp_callbacks ()->frame_get_local (frame, pos);
 	}
 
-	DEBUG_PRINTF (2, "adding val %p type [%p] %s\n", addr, type, mono_type_full_name (type));
+	DEBUG_PRINTF (2, "describe_variable: pos %d, adding val %p type [%p] %s\n", pos, addr, type, mono_type_full_name (type));
 
 	describe_value(type, addr, expandValueType);
 	if (header)
@@ -1263,6 +1268,26 @@ mono_wasm_get_array_value_expanded (int object_id, int idx)
 	DEBUG_PRINTF (2, "getting array value %d for idx %d\n", object_id, idx);
 
 	describe_array_value_expanded (object_id, idx);
+}
+
+EMSCRIPTEN_KEEPALIVE int
+mono_wasm_get_mono_type (int object_id)
+{
+	DEBUG_PRINTF (2, "getting mono_type for %d\n", object_id);
+
+	ObjRef *ref = (ObjRef *)g_hash_table_lookup (objrefs, GINT_TO_POINTER (object_id));
+	if (!ref) {
+		DEBUG_PRINTF (2, "describe_object_properties !ref\n");
+		return -1;
+	}
+
+	MonoObject *obj = mono_gchandle_get_target_internal (ref->handle);
+	if (!obj) {
+		DEBUG_PRINTF (2, "describe_object_properties !obj\n");
+		return -1;
+	}
+
+	return mono_class_get_type_token (mono_object_class (obj));
 }
 
 // Functions required by debugger-state-machine.
