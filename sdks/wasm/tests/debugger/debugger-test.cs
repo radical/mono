@@ -1,7 +1,7 @@
 using System;
 
 public partial class Math { //Only append content to this class as the test suite depends on line info
-	public static int IntAdd (int a, int b) {
+	public static int IntAdd2(int a, int b) {
 		int c = a + b; 
 		int d = c + b;
 		int e = d + a;

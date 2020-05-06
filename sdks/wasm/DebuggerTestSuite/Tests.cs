@@ -198,13 +198,13 @@ namespace DebuggerTests
 				await EvaluateAndCheck (
 					"window.setTimeout(function() { invoke_add(); }, 1);",
 					"dotnet://debugger-test.dll/debugger-test.cs", 5, 2,
-					"IntAdd",
+					"IntAdd2",
 					wait_for_event_fn: (pause_location) => {
 						Assert.Equal ("other", pause_location ["reason"]?.Value<string> ());
 						Assert.Equal (bp.Value["breakpointId"]?.ToString(), pause_location ["hitBreakpoints"]?[0]?.Value<string> ());
 
 						var top_frame = pause_location ["callFrames"][0];
-						Assert.Equal ("IntAdd", top_frame ["functionName"].Value<string>());
+						Assert.Equal ("IntAdd2", top_frame ["functionName"].Value<string>());
 						Assert.Contains ("debugger-test.cs", top_frame ["url"].Value<string> ());
 
 						CheckLocation ("dotnet://debugger-test.dll/debugger-test.cs", 3, 41, scripts, top_frame["functionLocation"]);
@@ -212,7 +212,7 @@ namespace DebuggerTests
 						//now check the scope
 						var scope = top_frame ["scopeChain"][0];
 						Assert.Equal ("local", scope ["type"]);
-						Assert.Equal ("IntAdd", scope ["name"]);
+						Assert.Equal ("IntAdd2", scope ["name"]);
 
 						Assert.Equal ("object", scope ["object"]["type"]);
 						Assert.Equal ("dotnet:scope:0", scope ["object"]["objectId"]);
@@ -277,7 +277,7 @@ namespace DebuggerTests
 		[InlineData (true)]
 		public async Task InspectLocalsAtBreakpointSite (bool use_cfo) =>
 			await CheckInspectLocalsAtBreakpointSite (
-				"dotnet://debugger-test.dll/debugger-test.cs", 5, 2, "IntAdd",
+				"dotnet://debugger-test.dll/debugger-test.cs", 5, 2, "IntAdd2",
 				"window.setTimeout(function() { invoke_add(); }, 1);",
 				use_cfo: use_cfo,
 				test_fn: (locals) => {
@@ -412,7 +412,7 @@ namespace DebuggerTests
 				await EvaluateAndCheck (
 					"window.setTimeout(function() { invoke_add(); }, 1);",
 					"dotnet://debugger-test.dll/debugger-test.cs", 5, 2,
-					"IntAdd",
+					"IntAdd2",
 					wait_for_event_fn: (pause_location) => {
 						//make sure we're on the right bp
 						Assert.Equal (bp.Value ["breakpointId"]?.ToString (), pause_location ["hitBreakpoints"]?[0]?.Value<string> ());
@@ -423,7 +423,7 @@ namespace DebuggerTests
 					}
 				);
 
-				await StepAndCheck (StepKind.Over, "dotnet://debugger-test.dll/debugger-test.cs", 6, 2, "IntAdd",
+				await StepAndCheck (StepKind.Over, "dotnet://debugger-test.dll/debugger-test.cs", 6, 2, "IntAdd2",
 						wait_for_event_fn: (pause_location) => {
 							var top_frame = pause_location ["callFrames"][0];
 							CheckLocation ("dotnet://debugger-test.dll/debugger-test.cs", 3, 41, scripts, top_frame["functionLocation"]);
@@ -448,7 +448,7 @@ namespace DebuggerTests
 
 				await EvaluateAndCheck (
 					"window.setTimeout(function() { invoke_add(); }, 1);",
-					debugger_test_loc, 4, 2, "IntAdd",
+					debugger_test_loc, 4, 2, "IntAdd2",
 					locals_fn: (locals) => {
 						CheckNumber (locals, "a", 10);
 						CheckNumber (locals, "b", 20);
@@ -458,7 +458,7 @@ namespace DebuggerTests
 					}
 				);
 
-				await StepAndCheck (StepKind.Over, debugger_test_loc, 5, 2, "IntAdd",
+				await StepAndCheck (StepKind.Over, debugger_test_loc, 5, 2, "IntAdd2",
 					locals_fn: (locals) => {
 						CheckNumber (locals, "a", 10);
 						CheckNumber (locals, "b", 20);
@@ -469,7 +469,7 @@ namespace DebuggerTests
 				);
 
 				//step and get locals
-				await StepAndCheck (StepKind.Over, debugger_test_loc, 6, 2, "IntAdd",
+				await StepAndCheck (StepKind.Over, debugger_test_loc, 6, 2, "IntAdd2",
 					locals_fn: (locals) => {
 						CheckNumber (locals, "a", 10);
 						CheckNumber (locals, "b", 20);
