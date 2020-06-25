@@ -35,7 +35,6 @@ EMSCRIPTEN_KEEPALIVE void mono_wasm_get_var_info (int scope, int* pos, int len);
 EMSCRIPTEN_KEEPALIVE void mono_wasm_clear_all_breakpoints (void);
 EMSCRIPTEN_KEEPALIVE int mono_wasm_setup_single_step (int kind);
 EMSCRIPTEN_KEEPALIVE void mono_wasm_get_object_properties (int object_id, gboolean expand_value_types);
-EMSCRIPTEN_KEEPALIVE void mono_wasm_get_vt_properties (void *value, MonoClass *klass);
 EMSCRIPTEN_KEEPALIVE void mono_wasm_get_array_values (int object_id, int start_idx, int count, gboolean expand_value_types);
 EMSCRIPTEN_KEEPALIVE void mono_wasm_invoke_getter_on_object (int object_id, const char* name);
 EMSCRIPTEN_KEEPALIVE void mono_wasm_invoke_getter_on_value (void *value, MonoClass *klass, const char *name);
@@ -1121,29 +1120,6 @@ describe_object_properties (guint64 objectId, gboolean isAsyncLocalThis, gboolea
 }
 
 static gboolean
-describe_vt_properties (void *value, MonoClass *klass)
-{
-	DEBUG_PRINTF (2, "describe_vt_properties value: %p, klass: %p\n", value, klass);
-	if (!value) {
-		DEBUG_PRINTF (1, "describe_vt_properties: !value\n");
-		return FALSE;
-	}
-
-	if (!klass) {
-		DEBUG_PRINTF (1, "describe_vt_properties: !klass!\n");
-		return FALSE;
-	}
-
-	if (!m_class_is_valuetype (klass)) {
-		DEBUG_PRINTF (1, "describe_vt_properties: klass is not a valuetype");
-		return FALSE;
-	}
-
-	describe_object_properties_for_klass (value, klass, TRUE, TRUE);
-	return TRUE;
-}
-
-static gboolean
 invoke_getter (void *obj_or_value, MonoClass *klass, const char *name)
 {
 	if (!obj_or_value || !klass || !name) {
@@ -1342,13 +1318,6 @@ mono_wasm_get_object_properties (int object_id, gboolean expand_value_types)
 	DEBUG_PRINTF (2, "getting properties of object %d\n", object_id);
 
 	describe_object_properties (object_id, FALSE, expand_value_types);
-}
-
-EMSCRIPTEN_KEEPALIVE void
-mono_wasm_get_vt_properties (void *value, MonoClass *klass)
-{
-	DEBUG_PRINTF (1, "getting properties of vt value: %p, klass: %p\n", value, klass);
-	describe_vt_properties (value, klass);
 }
 
 EMSCRIPTEN_KEEPALIVE void
