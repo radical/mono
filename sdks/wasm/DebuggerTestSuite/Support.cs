@@ -316,20 +316,28 @@ namespace DebuggerTests
 
 		internal async Task CheckDateTimeValue (JToken value, DateTime expected)
 		{
-			AssertEqual ("System.DateTime", value ["className"]?.Value<string> (), "className");
-			AssertEqual (expected.ToString (), value ["description"]?.Value<string> (), "description");
+			await CheckDateTimeMembers (value, expected);
 
-			var members = await GetProperties (value ["objectId"]?.Value<string> ());
-
-			// not checking everything
-			CheckNumber (members, "Year", expected.Year);
-			CheckNumber (members, "Month", expected.Month);
-			CheckNumber (members, "Day", expected.Day);
-			CheckNumber (members, "Hour", expected.Hour);
-			CheckNumber (members, "Minute", expected.Minute);
-			CheckNumber (members, "Second", expected.Second);
+			var res = await InvokeGetter (JObject.FromObject (new { value = value }), "Date");
+			await CheckDateTimeMembers (res.Value ["result"], expected.Date);
 
 			// FIXME: check some float properties too
+
+			async Task CheckDateTimeMembers (JToken v, DateTime exp_dt)
+			{
+				AssertEqual ("System.DateTime", v ["className"]?.Value<string> (), "className");
+				AssertEqual (exp_dt.ToString (), v ["description"]?.Value<string> (), "description");
+
+				var members = await GetProperties (v ["objectId"]?.Value<string> ());
+
+				// not checking everything
+				CheckNumber (members, "Year", exp_dt.Year);
+				CheckNumber (members, "Month", exp_dt.Month);
+				CheckNumber (members, "Day", exp_dt.Day);
+				CheckNumber (members, "Hour", exp_dt.Hour);
+				CheckNumber (members, "Minute", exp_dt.Minute);
+				CheckNumber (members, "Second", exp_dt.Second);
+			}
 		}
 
 		internal JToken CheckBool (JToken locals, string name, bool expected)
@@ -395,6 +403,20 @@ namespace DebuggerTests
 			var wait_res = await ctx.insp.WaitFor (Inspector.PAUSE);
 			AssertLocation (wait_res, "locals_inner");
 			return wait_res;
+		}
+
+		internal async Task<Result> InvokeGetter (JToken obj, object arguments, string fn = "function(e){return this[e]}",bool expect_ok = true)
+		{
+			var req = JObject.FromObject (new {
+				functionDeclaration = fn,
+				objectId            = obj ["value"]?["objectId"]?.Value<string> (),
+				arguments           = new [] { new { value = arguments } }
+			});
+
+			var res = await ctx.cli.SendCommand ("Runtime.callFunctionOn", req, ctx.token);
+			Assert.True (expect_ok == res.IsOk, $"InvokeGetter failed for {req} with {res}");
+
+			return res;
 		}
 
 		internal async Task<JObject> StepAndCheck (StepKind kind, string script_loc, int line, int column, string function_name,
@@ -591,7 +613,7 @@ namespace DebuggerTests
 
 				Assert.True(actual_obj != null, $"[{label}] not value found for property named '{exp_name}'");
 
-				var actual_val = actual_obj["value"];
+				var actual_val = actual_obj ["value"];
 				if (exp_val.Type == JTokenType.Array) {
 					var actual_props = await GetProperties(actual_val["objectId"]?.Value<string>());
 					await CheckProps (actual_props, exp_val, $"{label}-{exp_name}");
@@ -803,6 +825,8 @@ namespace DebuggerTests
 				: JObject.FromObject (new { type = "string", value = @value, description = @value });
 
 		internal static JObject TNumber (int value) =>
+			JObject.FromObject (new { type = "number", value = @value.ToString (), description = value.ToString () });
+		internal static JObject TNumber (uint value) =>
 			JObject.FromObject (new { type = "number", value = @value.ToString (), description = value.ToString () });
 
 		internal static JObject TValueType (string className, string description = null, object members = null) =>
